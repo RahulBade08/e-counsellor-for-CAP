@@ -1,4 +1,4 @@
-package com.ecounsellor.backend.service;
+package com.ecounsellor.backend.student.service;
 
 import java.util.Comparator;
 import java.util.List;
@@ -6,8 +6,8 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import com.ecounsellor.backend.entity.Cutoff;
-import com.ecounsellor.backend.repository.CutoffRepository;
+import com.ecounsellor.backend.student.entity.Cutoff;
+import com.ecounsellor.backend.student.repository.CutoffRepository;
 
 @Service
 public class PredictorService {

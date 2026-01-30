@@ -1,4 +1,4 @@
-package com.ecounsellor.backend.entity;
+package com.ecounsellor.backend.college.entity;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;

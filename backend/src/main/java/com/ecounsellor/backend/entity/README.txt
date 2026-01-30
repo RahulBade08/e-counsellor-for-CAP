@@ -1,1 +1,0 @@
-This folder is for backend/src/main/java/com/ecounsellor/entity

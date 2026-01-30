@@ -1,4 +1,4 @@
-package com.ecounsellor.backend.controller;
+package com.ecounsellor.backend.student.controller;
 
 import java.util.List;
 
@@ -8,8 +8,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.ecounsellor.backend.entity.Cutoff;
-import com.ecounsellor.backend.service.PredictorService;
+import com.ecounsellor.backend.student.entity.Cutoff;
+import com.ecounsellor.backend.student.service.PredictorService;
 
 @RestController
 @RequestMapping("/api/student")
