@@ -1,0 +1,23 @@
+# Eclipse / IDE
+.metadata/
+.project
+.classpath
+.settings/
+
+# Java / Maven
+target/
+*.log
+
+# Node
+node_modules/
+
+# Build
+dist/
+build/
+
+# Environment
+.env
+
+# OS junk
+Thumbs.db
+.DS_Store
