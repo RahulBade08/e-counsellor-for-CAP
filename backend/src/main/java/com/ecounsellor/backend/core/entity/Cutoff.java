@@ -1,12 +1,18 @@
 package com.ecounsellor.backend.core.entity;
 
-import jakarta.persistence.*;
-import lombok.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "cutoffs")
-@Getter @Setter
-@NoArgsConstructor @AllArgsConstructor
+
 public class Cutoff {
 
     @Id
@@ -41,4 +47,86 @@ public class Cutoff {
 
     @Column(name = "cutoff_percentile")
     private Double cutoffPercentile;
+
+	public Long getCutoffId() {
+		return cutoffId;
+	}
+
+	public void setCutoffId(Long cutoffId) {
+		this.cutoffId = cutoffId;
+	}
+
+	public Course getCourse() {
+		return course;
+	}
+
+	public void setCourse(Course course) {
+		this.course = course;
+	}
+
+	public Category getCategory() {
+		return category;
+	}
+
+	public void setCategory(Category category) {
+		this.category = category;
+	}
+
+	public String getCapCategoryCode() {
+		return capCategoryCode;
+	}
+
+	public void setCapCategoryCode(String capCategoryCode) {
+		this.capCategoryCode = capCategoryCode;
+	}
+
+	public String getGender() {
+		return gender;
+	}
+
+	public void setGender(String gender) {
+		this.gender = gender;
+	}
+
+	public String getRegionalReservation() {
+		return regionalReservation;
+	}
+
+	public void setRegionalReservation(String regionalReservation) {
+		this.regionalReservation = regionalReservation;
+	}
+
+	public Integer getRound() {
+		return round;
+	}
+
+	public void setRound(Integer round) {
+		this.round = round;
+	}
+
+	public Integer getLastCapRound() {
+		return lastCapRound;
+	}
+
+	public void setLastCapRound(Integer lastCapRound) {
+		this.lastCapRound = lastCapRound;
+	}
+
+	public Integer getLastRank() {
+		return lastRank;
+	}
+
+	public void setLastRank(Integer lastRank) {
+		this.lastRank = lastRank;
+	}
+
+	public Double getCutoffPercentile() {
+		return cutoffPercentile;
+	}
+
+	public void setCutoffPercentile(Double cutoffPercentile) {
+		this.cutoffPercentile = cutoffPercentile;
+	}
+
+    
 }
