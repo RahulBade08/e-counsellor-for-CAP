@@ -1,6 +1,6 @@
 package com.ecounsellor.backend.student.service;
 
-
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import com.ecounsellor.backend.core.entity.Category;
 import com.ecounsellor.backend.core.entity.Cutoff;
+import com.ecounsellor.backend.core.ml.MLClient;
 import com.ecounsellor.backend.core.repository.CategoryRepository;
 import com.ecounsellor.backend.core.repository.CutoffRepository;
 import com.ecounsellor.backend.student.dto.StudentPredictionRequest;
@@ -22,15 +23,18 @@ public class StudentPredictionService {
 
     private final CutoffRepository cutoffRepository;
     private final CategoryRepository categoryRepository;
+    private final MLClient mlClient;
 
     public StudentPredictionService(
             CutoffRepository cutoffRepository,
-            CategoryRepository categoryRepository
+            CategoryRepository categoryRepository,
+            MLClient mlClient
     ) {
         this.cutoffRepository = cutoffRepository;
         this.categoryRepository = categoryRepository;
+        this.mlClient = mlClient;
     }
-    
+
     private String calculateRisk(Double studentPercentile, Double cutoffPercentile) {
 
         double diff = studentPercentile - cutoffPercentile;
@@ -43,8 +47,6 @@ public class StudentPredictionService {
             return "RISKY";
         }
     }
-
-
 
     public Page<StudentPredictionResponse> predictColleges(
             StudentPredictionRequest request,
@@ -72,26 +74,56 @@ public class StudentPredictionService {
                         pageable
                 );
 
-        // sort only page content by closeness
-        List<StudentPredictionResponse> sorted =
+        // ✅ Step 1: Sort by closeness
+        List<Cutoff> sortedCutoffs =
                 cutoffsPage.getContent().stream()
                         .sorted(Comparator.comparingDouble(
-                                c -> Math.abs(request.getPercentile() - c.getCutoffPercentile())
-                        ))
-                        .map(c -> new StudentPredictionResponse(
-                                c.getCourse().getCollege().getCollegeName(),
-                                c.getCourse().getCourseName(),
-                                c.getCutoffPercentile(),
-                                c.getRound(),
-                                calculateRisk(request.getPercentile(), c.getCutoffPercentile())
+                                c -> Math.abs(
+                                        request.getPercentile()
+                                                - c.getCutoffPercentile()
+                                )
                         ))
                         .toList();
 
+        // ✅ Step 2: Collect cutoff values
+        List<Double> cutoffValues =
+                sortedCutoffs.stream()
+                        .map(Cutoff::getCutoffPercentile)
+                        .toList();
+
+        // ✅ Step 3: ONE ML CALL
+        List<Double> probabilities =
+                mlClient.getBatchProbabilities(
+                        request.getPercentile(),
+                        cutoffValues
+                );
+
+        // ✅ Step 4: Build responses
+        List<StudentPredictionResponse> responses = new ArrayList<>();
+
+        for (int i = 0; i < sortedCutoffs.size(); i++) {
+
+            Cutoff c = sortedCutoffs.get(i);
+
+            responses.add(
+                    new StudentPredictionResponse(
+                            c.getCourse().getCollege().getCollegeName(),
+                            c.getCourse().getCourseName(),
+                            c.getCutoffPercentile(),
+                            c.getRound(),
+                            calculateRisk(
+                                    request.getPercentile(),
+                                    c.getCutoffPercentile()
+                            ),
+                            probabilities.get(i)
+                    )
+            );
+        }
+
         return new PageImpl<>(
-                sorted,
+                responses,
                 pageable,
                 cutoffsPage.getTotalElements()
         );
-
     }
 }
