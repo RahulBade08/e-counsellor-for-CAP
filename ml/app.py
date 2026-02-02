@@ -88,3 +88,25 @@ def predict(req: PredictionRequest):
             status_code=500,
             detail=f"Prediction failed: {str(e)}"
         )
+
+class BatchRequest(BaseModel):
+    student_percentile: float
+    cutoff_percentiles: list[float]
+
+
+@app.post("/predict-batch")
+def predict_batch(req: BatchRequest):
+
+    results = []
+
+    for cutoff in req.cutoff_percentiles:
+        gap = req.student_percentile - cutoff
+
+        prob = 1 / (1 + np.exp(-gap / 3))
+
+        prob = float(np.clip(prob, 0.1, 0.95))
+
+        results.append(float(prob))
+
+    return {"probabilities": results}
+

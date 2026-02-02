@@ -35,17 +35,20 @@ public class StudentPredictionService {
         this.mlClient = mlClient;
     }
 
-    private String calculateRisk(Double studentPercentile, Double cutoffPercentile) {
+    // ⭐ Risk based on probability (better than raw diff)
+    private String riskFromProbability(double prob) {
+        if (prob >= 0.8) return "SAFE";
+        if (prob >= 0.5) return "MODERATE";
+        return "RISKY";
+    }
 
-        double diff = studentPercentile - cutoffPercentile;
+    // ⭐ Confidence from percentile gap
+    private String confidenceFromGap(double gap) {
+        double g = Math.abs(gap);
 
-        if (diff >= 1.0) {
-            return "SAFE";
-        } else if (diff >= 0.3) {
-            return "MODERATE";
-        } else {
-            return "RISKY";
-        }
+        if (g >= 10) return "HIGH";
+        if (g >= 5) return "MEDIUM";
+        return "LOW";
     }
 
     public Page<StudentPredictionResponse> predictColleges(
@@ -55,6 +58,7 @@ public class StudentPredictionService {
     ) {
 
         Integer round = request.getRound() != null ? request.getRound() : 4;
+
         String gender = request.getGender() != null
                 ? request.getGender().toUpperCase()
                 : "GENERAL";
@@ -74,7 +78,7 @@ public class StudentPredictionService {
                         pageable
                 );
 
-        // ✅ Step 1: Sort by closeness
+        // 1️⃣ Sort by closeness first
         List<Cutoff> sortedCutoffs =
                 cutoffsPage.getContent().stream()
                         .sorted(Comparator.comparingDouble(
@@ -85,25 +89,31 @@ public class StudentPredictionService {
                         ))
                         .toList();
 
-        // ✅ Step 2: Collect cutoff values
+        // 2️⃣ Collect cutoffs
         List<Double> cutoffValues =
                 sortedCutoffs.stream()
                         .map(Cutoff::getCutoffPercentile)
                         .toList();
 
-        // ✅ Step 3: ONE ML CALL
+        // 3️⃣ ONE ML CALL
         List<Double> probabilities =
                 mlClient.getBatchProbabilities(
                         request.getPercentile(),
                         cutoffValues
                 );
 
-        // ✅ Step 4: Build responses
+        // 4️⃣ Build responses
         List<StudentPredictionResponse> responses = new ArrayList<>();
 
         for (int i = 0; i < sortedCutoffs.size(); i++) {
 
             Cutoff c = sortedCutoffs.get(i);
+
+            double prob = probabilities.get(i);
+
+            double gap =
+                    request.getPercentile()
+                            - c.getCutoffPercentile();
 
             responses.add(
                     new StudentPredictionResponse(
@@ -111,14 +121,19 @@ public class StudentPredictionService {
                             c.getCourse().getCourseName(),
                             c.getCutoffPercentile(),
                             c.getRound(),
-                            calculateRisk(
-                                    request.getPercentile(),
-                                    c.getCutoffPercentile()
-                            ),
-                            probabilities.get(i)
+                            riskFromProbability(prob),
+                            prob,
+                            confidenceFromGap(gap)
                     )
             );
         }
+
+        // ⭐ FINAL SORT by probability DESC (best first)
+        responses.sort(
+                Comparator.comparing(
+                        StudentPredictionResponse::getProbability
+                ).reversed()
+        );
 
         return new PageImpl<>(
                 responses,

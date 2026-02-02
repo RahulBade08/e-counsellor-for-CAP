@@ -8,6 +8,8 @@ public class StudentPredictionResponse {
     private Integer round;
     private String risk;
     private double probability;
+    private String confidence;
+
 
     public StudentPredictionResponse(
             String collegeName,
@@ -15,7 +17,8 @@ public class StudentPredictionResponse {
             Double cutoffPercentile,
             Integer round,
             String risk,
-            double probability
+            double probability,
+            String confidence
     ) {
         this.collegeName = collegeName;
         this.courseName = courseName;
@@ -23,6 +26,7 @@ public class StudentPredictionResponse {
         this.round = round;
         this.risk = risk;
         this.probability = probability;
+        this.confidence = confidence;
     }
 
     public String getCollegeName() {
@@ -51,6 +55,14 @@ public class StudentPredictionResponse {
 
 	public void setProbability(double probability) {
 		this.probability = probability;
+	}
+
+	public String getConfidence() {
+		return confidence;
+	}
+
+	public void setConfidence(String confidence) {
+		this.confidence = confidence;
 	}
     
     
