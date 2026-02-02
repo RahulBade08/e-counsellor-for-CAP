@@ -70,13 +70,15 @@ public class StudentPredictionService {
         Pageable pageable = PageRequest.of(page, size);
 
         Page<Cutoff> cutoffsPage =
-                cutoffRepository.findEligibleCutoffsPaged(
-                        category,
-                        gender,
-                        round,
-                        request.getPercentile(),
-                        pageable
-                );
+        		cutoffRepository.findEligibleCutoffsPaged(
+        			    category,
+        			    gender,
+        			    round,
+        			    request.getPercentile(),
+        			    request.getBranch(),
+        			    pageable
+        			);
+
 
         // 1️⃣ Sort by closeness first
         List<Cutoff> sortedCutoffs =

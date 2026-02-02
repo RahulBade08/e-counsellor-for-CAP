@@ -6,8 +6,10 @@ public class StudentPredictionRequest {
     private String category;
     private String gender;
     private Integer round;
+    private String branch;
 
-    public Double getPercentile() {
+
+	public Double getPercentile() {
         return percentile;
     }
 
@@ -38,5 +40,14 @@ public class StudentPredictionRequest {
     public void setRound(Integer round) {
         this.round = round;
     }
+    
+    public String getBranch() {
+		return branch;
+	}
+
+	public void setBranch(String branch) {
+		this.branch = branch;
+	}
+
 }
 
