@@ -3,10 +3,11 @@ package com.ecounsellor.backend.admin.controller;
 import java.util.Map;
 
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.ecounsellor.backend.admin.dto.LoginRequest;
 import com.ecounsellor.backend.admin.service.AdminAuthService;
 
 @RestController
@@ -21,14 +22,15 @@ public class AdminAuthController {
 
     @PostMapping("/login")
     public Map<String,String> login(
-            @RequestParam String username,
-            @RequestParam String password){
+            @RequestBody LoginRequest request){
 
-        String token = service.login(username, password);
+        String token =
+            service.login(
+                request.getUsername(),
+                request.getPassword()
+            );
 
         return Map.of("token", token);
     }
-    
-   
-
 }
+
