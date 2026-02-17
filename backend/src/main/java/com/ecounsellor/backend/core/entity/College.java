@@ -9,13 +9,12 @@ import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "colleges")
-
 public class College {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long collegeId;
-    
+
     @Column(name = "college_code", nullable = false, unique = true)
     private String collegeCode;
 
@@ -25,37 +24,61 @@ public class College {
     @Column(name = "course_university")
     private String courseUniversity;
 
-	public Long getCollegeId() {
-		return collegeId;
-	}
+    // ── New fields from MHT-CET scrape ──────────────────────────────────────
 
-	public void setCollegeId(Long collegeId) {
-		this.collegeId = collegeId;
-	}
+    @Column(name = "funding_type")
+    private String fundingType;             // Government / Un-Aided / Government-Aided / University
 
-	public String getCollegeCode() {
-		return collegeCode;
-	}
+    @Column(name = "is_autonomous")
+    private Boolean isAutonomous;
 
-	public void setCollegeCode(String collegeCode) {
-		this.collegeCode = collegeCode;
-	}
+    @Column(name = "minority_status")
+    private String minorityStatus;          // Non-Minority / Linguistic Minority - Hindi / etc.
 
-	public String getCollegeName() {
-		return collegeName;
-	}
+    @Column(name = "total_intake")
+    private Integer totalIntake;
 
-	public void setCollegeName(String collegeName) {
-		this.collegeName = collegeName;
-	}
+    @Column(name = "address")
+    private String address;
 
-	public String getCourseUniversity() {
-		return courseUniversity;
-	}
+    @Column(name = "region")
+    private String region;                  // Amravati / Aurangabad / Mumbai / Nagpur / Nashik / Pune
 
-	public void setCourseUniversity(String courseUniversity) {
-		this.courseUniversity = courseUniversity;
-	}
+    @Column(name = "district")
+    private String district;               // Pune / Thane / Nagpur / etc.
 
-    
+    // ── Getters & Setters ────────────────────────────────────────────────────
+
+    public Long getCollegeId() { return collegeId; }
+    public void setCollegeId(Long collegeId) { this.collegeId = collegeId; }
+
+    public String getCollegeCode() { return collegeCode; }
+    public void setCollegeCode(String collegeCode) { this.collegeCode = collegeCode; }
+
+    public String getCollegeName() { return collegeName; }
+    public void setCollegeName(String collegeName) { this.collegeName = collegeName; }
+
+    public String getCourseUniversity() { return courseUniversity; }
+    public void setCourseUniversity(String courseUniversity) { this.courseUniversity = courseUniversity; }
+
+    public String getFundingType() { return fundingType; }
+    public void setFundingType(String fundingType) { this.fundingType = fundingType; }
+
+    public Boolean getIsAutonomous() { return isAutonomous; }
+    public void setIsAutonomous(Boolean isAutonomous) { this.isAutonomous = isAutonomous; }
+
+    public String getMinorityStatus() { return minorityStatus; }
+    public void setMinorityStatus(String minorityStatus) { this.minorityStatus = minorityStatus; }
+
+    public Integer getTotalIntake() { return totalIntake; }
+    public void setTotalIntake(Integer totalIntake) { this.totalIntake = totalIntake; }
+
+    public String getAddress() { return address; }
+    public void setAddress(String address) { this.address = address; }
+
+    public String getRegion() { return region; }
+    public void setRegion(String region) { this.region = region; }
+
+    public String getDistrict() { return district; }
+    public void setDistrict(String district) { this.district = district; }
 }
