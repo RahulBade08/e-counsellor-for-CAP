@@ -20,6 +20,23 @@ import com.ecounsellor.backend.core.repository.CutoffRepository;
 import com.ecounsellor.backend.student.dto.StudentPredictionRequest;
 import com.ecounsellor.backend.student.dto.StudentPredictionResponse;
 
+/**
+ * Ordering logic follows the real-world MHT-CET / JoSAA counseling approach:
+ *
+ *  Zone 1 — SAFE      (prob >= 0.80): sorted by cutoff DESC
+ *            Best reachable colleges where admission is almost certain.
+ *            Higher cutoff = more competitive/prestigious college → shown first.
+ *
+ *  Zone 2 — MODERATE  (prob 0.50–0.79): sorted by probability DESC, then cutoff DESC
+ *            Colleges with a reasonable chance. Highest probability shown first.
+ *
+ *  Zone 3 — RISKY     (prob < 0.50): sorted by probability DESC
+ *            Stretch/aspirational colleges — lowest probability last.
+ *
+ * KEY FIX: Sorting now happens on the FULL deduped list BEFORE pagination.
+ * The old code sorted only the current page slice, causing random ordering
+ * across pages (e.g. 88.4, 72.2, 40.9, 79.4 appearing mixed on the same page).
+ */
 @Service
 public class StudentPredictionService {
 
@@ -33,9 +50,18 @@ public class StudentPredictionService {
         this.mlClient         = mlClient;
     }
 
-    private String riskFromProbability(double prob) {
-        if (prob >= 0.8) return "SAFE";
-        if (prob >= 0.5) return "MODERATE";
+    // ── Zone & label helpers ───────────────────────────────────────────────────
+
+    /** Returns 1=SAFE, 2=MODERATE, 3=RISKY for primary sort key. */
+    private int zone(double prob) {
+        if (prob >= 0.80) return 1;
+        if (prob >= 0.50) return 2;
+        return 3;
+    }
+
+    private String riskLabel(double prob) {
+        if (prob >= 0.80) return "SAFE";
+        if (prob >= 0.50) return "MODERATE";
         return "RISKY";
     }
 
@@ -46,22 +72,22 @@ public class StudentPredictionService {
         return "LOW";
     }
 
+    // ── Main prediction method ─────────────────────────────────────────────────
+
     public Page<StudentPredictionResponse> predictColleges(
             StudentPredictionRequest request,
             int page,
             int size) {
 
-        Integer round   = request.getRound() != null ? request.getRound() : 4;
-
-        // Derive exact cap_category_code — one unique code, no ambiguity
-        String capCode  = request.derivedCapCategoryCode();
+        Integer round  = request.getRound() != null ? request.getRound() : 4;
+        String capCode = request.derivedCapCategoryCode();
 
         List<String> branches  = request.getBranchesLower();
         List<String> districts = request.getDistrictsLower();
         boolean hasBranch      = !branches.isEmpty();
         boolean hasDistrict    = !districts.isEmpty();
 
-        // Fetch all rows for this exact cap code (no pagination yet — dedup first)
+        // Fetch all eligible rows (we sort in memory — DB order doesn't matter here)
         Pageable all = PageRequest.of(0, 10_000);
 
         Page<Cutoff> cutoffsPage;
@@ -79,8 +105,7 @@ public class StudentPredictionService {
                     capCode, round, request.getPercentile(), all);
         }
 
-        // ── Dedup: one exact capCode per college+course → should be 1 row now ──
-        // putIfAbsent still guards against any edge-case duplicates
+        // Dedup: one entry per college+course combination
         Map<String, Cutoff> best = new LinkedHashMap<>();
         for (Cutoff c : cutoffsPage.getContent()) {
             String key = c.getCourse().getCollege().getCollegeId()
@@ -88,40 +113,34 @@ public class StudentPredictionService {
             best.putIfAbsent(key, c);
         }
 
-        List<Cutoff> deduped     = new ArrayList<>(best.values());
+        List<Cutoff> deduped      = new ArrayList<>(best.values());
         int          totalDeduped = deduped.size();
 
-        // ── Manual pagination on deduped list ────────────────────────────────
-        int from      = page * size;
-        int to        = Math.min(from + size, totalDeduped);
-        List<Cutoff> pageSlice = from >= totalDeduped
-                ? List.of() : deduped.subList(from, to);
-
-        // ── Batch ML call ─────────────────────────────────────────────────────
-        List<Double> cutoffValues = pageSlice.stream()
+        // ── ML probabilities for the ENTIRE deduped list ──────────────────────
+        // Must compute probabilities before sorting — we sort BY probability.
+        List<Double> allCutoffValues = deduped.stream()
                 .map(Cutoff::getCutoffPercentile).toList();
 
-        List<Double> probabilities = mlClient.getBatchProbabilities(
-                request.getPercentile(), cutoffValues);
+        List<Double> allProbabilities = mlClient.getBatchProbabilities(
+                request.getPercentile(), allCutoffValues);
 
-        // ── Build responses ───────────────────────────────────────────────────
-        List<StudentPredictionResponse> responses = new ArrayList<>();
-
-        for (int i = 0; i < pageSlice.size(); i++) {
-            Cutoff  c       = pageSlice.get(i);
+        // ── Build full response list with probabilities attached ──────────────
+        List<StudentPredictionResponse> allResponses = new ArrayList<>();
+        for (int i = 0; i < deduped.size(); i++) {
+            Cutoff  c       = deduped.get(i);
             Course  course  = c.getCourse();
             College college = course.getCollege();
 
-            double prob = probabilities.get(i);
+            double prob = allProbabilities.get(i);
             double gap  = request.getPercentile() - c.getCutoffPercentile();
 
-            responses.add(new StudentPredictionResponse(
+            allResponses.add(new StudentPredictionResponse(
                     college.getCollegeName(),
                     college.getCollegeCode(),
                     course.getCourseName(),
                     c.getCutoffPercentile(),
                     c.getRound(),
-                    riskFromProbability(prob),
+                    riskLabel(prob),
                     prob,
                     confidenceFromGap(gap),
                     college.getDistrict(),
@@ -133,10 +152,32 @@ public class StudentPredictionService {
             ));
         }
 
-        // Best probability first
-        responses.sort(Comparator.comparing(
-                StudentPredictionResponse::getProbability).reversed());
+        // ── Sort FULL list before paginating (3-zone MHT-CET / JoSAA style) ──
+        allResponses.sort(Comparator
+                // Primary: zone (1=SAFE first, 3=RISKY last)
+                .<StudentPredictionResponse>comparingInt(r -> zone(r.getProbability()))
+                // Secondary: within-zone ordering
+                .thenComparing((a, b) -> {
+                    int zA = zone(a.getProbability());
+                    if (zA == 1) {
+                        // SAFE zone: higher cutoff = more prestigious college first
+                        return Double.compare(b.getCutoffPercentile(), a.getCutoffPercentile());
+                    } else {
+                        // MODERATE/RISKY: higher probability first
+                        int probCmp = Double.compare(b.getProbability(), a.getProbability());
+                        if (probCmp != 0) return probCmp;
+                        // Tiebreak: higher cutoff first
+                        return Double.compare(b.getCutoffPercentile(), a.getCutoffPercentile());
+                    }
+                })
+        );
 
-        return new PageImpl<>(responses, PageRequest.of(page, size), totalDeduped);
+        // ── Paginate the now-correctly-sorted full list ───────────────────────
+        int from      = page * size;
+        int to        = Math.min(from + size, totalDeduped);
+        List<StudentPredictionResponse> pageSlice = from >= totalDeduped
+                ? List.of() : allResponses.subList(from, to);
+
+        return new PageImpl<>(new ArrayList<>(pageSlice), PageRequest.of(page, size), totalDeduped);
     }
 }
