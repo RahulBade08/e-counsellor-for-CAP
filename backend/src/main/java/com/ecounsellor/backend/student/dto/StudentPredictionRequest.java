@@ -1,6 +1,7 @@
 package com.ecounsellor.backend.student.dto;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class StudentPredictionRequest {
 
@@ -8,22 +9,9 @@ public class StudentPredictionRequest {
     private String  category;
     private String  gender;
     private Integer round;
-
-    /**
-     * Admission type — student selects one of:
-     *   "STATE"  → State Level seats          (suffix S, e.g. GOBCS)
-     *   "HOME"   → Home University seats      (suffix H, e.g. GOBCH)
-     *   "OTHER"  → Other University seats     (suffix O, e.g. GOBCO)
-     *
-     * Default: "STATE" (most common for Maharashtra students)
-     */
-    private String admissionType = "STATE";
-
-    // Multi-select filters (empty = no filter)
+    private String  admissionType = "STATE";
     private List<String> branches;
     private List<String> districts;
-
-    // ── Getters & Setters ─────────────────────────────────────────────────────
 
     public Double  getPercentile()             { return percentile; }
     public void    setPercentile(Double p)     { this.percentile = p; }
@@ -37,75 +25,55 @@ public class StudentPredictionRequest {
     public Integer getRound()                  { return round; }
     public void    setRound(Integer r)         { this.round = r; }
 
-    public String  getAdmissionType()                   { return admissionType; }
+    public String  getAdmissionType()                     { return admissionType; }
     public void    setAdmissionType(String admissionType) { this.admissionType = admissionType; }
 
     public List<String> getBranches()               { return branches; }
     public void         setBranches(List<String> b) { this.branches = b; }
-    public void         setBranch(List<String> b)   { this.branches = b; } // alias
+    public void         setBranch(List<String> b)   { this.branches = b; }
 
     public List<String> getDistricts()               { return districts; }
     public void         setDistricts(List<String> d) { this.districts = d; }
-    public void         setDistrict(List<String> d)  { this.districts = d; } // alias
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    public void         setDistrict(List<String> d)  { this.districts = d; }
 
     public boolean hasBranchFilter()   { return branches  != null && !branches.isEmpty(); }
     public boolean hasDistrictFilter() { return districts != null && !districts.isEmpty(); }
 
-    public List<String> getBranchesLower() {
-        if (branches == null || branches.isEmpty()) return List.of();
-        return branches.stream().map(String::toLowerCase).toList();
-    }
-
-    public List<String> getDistrictsLower() {
-        if (districts == null || districts.isEmpty()) return List.of();
-        return districts.stream().map(String::toLowerCase).toList();
+    /**
+     * Expands group labels to exact DB course names via BranchGroups.
+     * "Computer Science" -> ["Computer Engineering", "Computer Science and Engineering", ...]
+     * "Computer Science and Engineering" (exact) -> passes through unchanged.
+     */
+    public List<String> expandedBranches() {
+        return BranchGroups.expand(branches);
     }
 
     /**
-     * Derives the exact cap_category_code stored in DB.
-     *
-     * Structure:  [gender prefix] + [category] + [admission suffix]
-     *
-     * Gender prefix:
-     *   G → GENERAL (male or co-ed)
-     *   L → LADIES
-     *
-     * Category middle:
-     *   OPEN, OBC, SC, ST, NT1, NT2, NT3, EWS, TFWS
-     *
-     * Admission suffix:
-     *   S → State Level
-     *   H → Home University
-     *   O → Other University
-     *
-     * Special cases (no prefix/suffix):
-     *   EWS  → always "EWS"
-     *   TFWS → always "TFWS"
-     *   DEF* → Defence quota (not handled here)
-     *   PWD* → PwD quota    (not handled here)
-     *
-     * Examples:
-     *   OBC  + GENERAL + STATE  → GOBCS
-     *   OBC  + GENERAL + HOME   → GOBCH
-     *   OBC  + GENERAL + OTHER  → GOBCO
-     *   OPEN + LADIES  + HOME   → LOPENH
-     *   SC   + GENERAL + STATE  → GSCS
-     *   NT-1 + LADIES  + OTHER  → LNT1O
+     * Districts lowercased to match LOWER(col.district) in SQL query.
+     * Handles any case inconsistency in DB rows.
+     */
+    public List<String> districtListLower() {
+        if (districts == null || districts.isEmpty()) return List.of();
+        return districts.stream().map(String::toLowerCase).collect(Collectors.toList());
+    }
+
+    /**
+     * Derives the cap_category_code from category + gender + admissionType.
+     * OPEN + GENERAL + HOME  -> GOPENH
+     * OBC  + GENERAL + STATE -> GOBCS
+     * SC   + LADIES  + OTHER -> LSCO
+     * EWS  -> EWS (flat, no prefix/suffix)
+     * TFWS -> TFWS (flat, no prefix/suffix)
      */
     public String derivedCapCategoryCode() {
-        // Special flat codes — no prefix/suffix
         if (category != null) {
             String cat = category.toUpperCase().trim();
             if (cat.equals("EWS"))  return "EWS";
             if (cat.equals("TFWS")) return "TFWS";
         }
-
         String prefix = (gender != null && gender.equalsIgnoreCase("LADIES")) ? "L" : "G";
         String suffix = admissionTypeSuffix();
         String mid    = normalizeCategory(category);
-
         return prefix + mid + suffix;
     }
 
@@ -114,7 +82,7 @@ public class StudentPredictionRequest {
         return switch (admissionType.toUpperCase().trim()) {
             case "HOME"  -> "H";
             case "OTHER" -> "O";
-            default      -> "S"; // STATE is default
+            default      -> "S";
         };
     }
 
