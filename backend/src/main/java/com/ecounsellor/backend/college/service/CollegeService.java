@@ -177,6 +177,11 @@ public class CollegeService {
         }
         collegeRepo.deleteById(id);
     }
+    
+    //*** ── Get all distinct course names (for branch dropdown) ───────────────────
+    public List<String> getAllBranches() {
+        return courseRepo.findAllDistinctCourseNames();
+    }
 
     // ── Helper: College + Courses → DTO ───────────────────────────────────────
     private CollegeDTO toDTO(College college, List<Course> courses) {

@@ -11,6 +11,10 @@ import java.util.List;
 
 public interface CutoffRepository extends JpaRepository<Cutoff, Long> {
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // EXISTING QUERIES — unchanged
+    // ══════════════════════════════════════════════════════════════════════════
+
     @Query("""
             SELECT c FROM Cutoff c
             JOIN c.course co JOIN co.college col
@@ -26,7 +30,6 @@ public interface CutoffRepository extends JpaRepository<Cutoff, Long> {
             @Param("percentile") Double  percentile,
             Pageable pageable);
 
-    // Exact IN match — branches are already expanded to exact DB names by BranchGroups.expand()
     @Query("""
             SELECT c FROM Cutoff c
             JOIN c.course co JOIN co.college col
@@ -44,7 +47,6 @@ public interface CutoffRepository extends JpaRepository<Cutoff, Long> {
             @Param("branches")   List<String> branches,
             Pageable pageable);
 
-    // LOWER() on both sides — districts passed as lowercase, handles any DB case inconsistency
     @Query("""
             SELECT c FROM Cutoff c
             JOIN c.course co JOIN co.college col
@@ -80,4 +82,65 @@ public interface CutoffRepository extends JpaRepository<Cutoff, Long> {
             @Param("branches")   List<String> branches,
             @Param("districts")  List<String> districts,
             Pageable pageable);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // NEW — College Counselling Queries
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Full cutoff history for a college — all branches, all categories, all rounds.
+     * Returns: courseCode, courseName, capCategoryCode, gender, round, cutoffPercentile, intake
+     * Used by: /api/counselling/{collegeCode}/cutoff-history
+     */
+    @Query("""
+        SELECT co.courseCode, co.courseName,
+               c.capCategoryCode, c.gender,
+               c.round, c.cutoffPercentile, co.intake
+        FROM Cutoff c
+        JOIN c.course co
+        JOIN co.college col
+        WHERE col.collegeCode = :collegeCode
+        ORDER BY co.courseName, c.capCategoryCode, c.round
+        """)
+    List<Object[]> findCutoffHistoryByCollegeCode(@Param("collegeCode") String collegeCode);
+
+    /**
+     * Latest cutoffs for a college at a specific round — for target range calculation.
+     * Returns: courseCode, courseName, capCategoryCode, gender, cutoffPercentile, intake
+     * Used by: /api/counselling/{collegeCode}/target-ranges
+     */
+    @Query("""
+        SELECT co.courseCode, co.courseName,
+               c.capCategoryCode, c.gender,
+               c.cutoffPercentile, co.intake
+        FROM Cutoff c
+        JOIN c.course co
+        JOIN co.college col
+        WHERE col.collegeCode = :collegeCode
+          AND c.round         = :round
+        ORDER BY co.courseName, c.capCategoryCode
+        """)
+    List<Object[]> findLatestCutoffsByCollegeAndRound(
+        @Param("collegeCode") String collegeCode,
+        @Param("round")       int    round);
+
+    /**
+     * Get cutoffs for a specific branch+category for ML prediction input.
+     * Returns the most recent round cutoff for that combination.
+     * Used internally by CounsellingService to call ML for prediction.
+     */
+    @Query("""
+        SELECT c.cutoffPercentile
+        FROM Cutoff c
+        JOIN c.course co
+        JOIN co.college col
+        WHERE col.collegeCode    = :collegeCode
+          AND co.courseCode      = :courseCode
+          AND c.capCategoryCode  = :capCategoryCode
+        ORDER BY c.round DESC
+        """)
+    List<Double> findCutoffForPrediction(
+        @Param("collegeCode")    String collegeCode,
+        @Param("courseCode")     String courseCode,
+        @Param("capCategoryCode") String capCategoryCode);
 }

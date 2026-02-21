@@ -39,6 +39,16 @@ public class CollegeController {
     public ResponseEntity<List<String>> getDistricts() {
         return ResponseEntity.ok(service.getAllDistricts());
     }
+    
+    //*** ── GET ALL BRANCHES (distinct course names from DB) ──────────────────────
+    // GET /api/college/branches
+    // Response: ["Artificial Intelligence", "Computer Engineering", ...]
+    // Used by Android app branch dropdown — replaces hardcoded group labels.
+    @GetMapping("/branches")
+    public ResponseEntity<List<String>> getBranches() {
+        return ResponseEntity.ok(service.getAllBranches());
+    }
+
 
     // ── GET ALL REGIONS ───────────────────────────────────────────────────────
     // GET /api/college/regions
@@ -62,7 +72,8 @@ public class CollegeController {
         List<CollegeDTO> colleges = service.getByDistricts(districts);
         return ResponseEntity.ok(colleges);
     }
-
+    
+    
     // ── GET ALL COLLEGES ──────────────────────────────────────────────────────
     // GET /api/college/all
     @GetMapping("/all")

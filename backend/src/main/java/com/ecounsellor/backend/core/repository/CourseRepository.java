@@ -18,4 +18,9 @@ public interface CourseRepository extends JpaRepository<Course, Long> {
     // ── All courses for a list of colleges (used in district filter) ─────────
     @Query("SELECT c FROM Course c WHERE c.college.collegeId IN :collegeIds ORDER BY c.college.collegeName, c.courseName")
     List<Course> findByCollegeIds(@Param("collegeIds") List<Long> collegeIds);
+    
+    // Returns all distinct course names sorted alphabetically.
+    @Query("SELECT DISTINCT c.courseName FROM Course c WHERE c.courseName IS NOT NULL ORDER BY c.courseName")
+    List<String> findAllDistinctCourseNames();
+
 }
