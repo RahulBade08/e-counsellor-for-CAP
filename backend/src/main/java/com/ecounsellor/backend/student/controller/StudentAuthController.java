@@ -7,17 +7,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * Student Authentication API
- *
- * PUBLIC (no token needed):
- *   POST /api/student/auth/register   — create account
- *   POST /api/student/auth/login      — login, get JWT token
- *
- * PROTECTED (requires Authorization: Bearer <token>):
- *   GET  /api/student/me              — get own profile
- *   PUT  /api/student/me              — update preferences
- */
 @RestController
 @CrossOrigin(origins = "*")
 public class StudentAuthController {
@@ -28,54 +17,29 @@ public class StudentAuthController {
         this.service = service;
     }
 
-    // ── REGISTER ──────────────────────────────────────────────────────────────
-    /**
-     * POST /api/student/auth/register
-     * Body: {
-     *   "name": "Rahul Patil",
-     *   "phone": "9876543210",
-     *   "password": "rahul123",
-     *   "cetAppNumber": "24-CET-012345",   ← optional
-     *   "cetPercentile": 82.4,
-     *   "category": "OBC",
-     *   "gender": "GENERAL",
-     *   "admissionType": "STATE"
-     * }
-     * Response: { "token": "eyJ...", "role": "STUDENT", "profile": {...} }
-     */
+    // ── PUBLIC ────────────────────────────────────────────────────────────────
+
     @PostMapping("/api/student/auth/register")
     public ResponseEntity<?> register(@RequestBody RegisterRequest req) {
         try {
-            AuthResponse resp = service.register(req);
-            return ResponseEntity.status(HttpStatus.CREATED).body(resp);
+            return ResponseEntity.status(HttpStatus.CREATED).body(service.register(req));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
 
-    // ── LOGIN ─────────────────────────────────────────────────────────────────
-    /**
-     * POST /api/student/auth/login
-     * Body: { "phone": "9876543210", "password": "rahul123" }
-     * Response: { "token": "eyJ...", "role": "STUDENT", "profile": {...} }
-     */
     @PostMapping("/api/student/auth/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest req) {
         try {
-            AuthResponse resp = service.login(req);
-            return ResponseEntity.ok(resp);
+            return ResponseEntity.ok(service.login(req));
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(new ErrorResponse(e.getMessage()));
+                    .body(new ErrorResponse(e.getMessage()));
         }
     }
 
-    // ── GET OWN PROFILE ───────────────────────────────────────────────────────
-    /**
-     * GET /api/student/me
-     * Header: Authorization: Bearer <token>
-     * Response: StudentProfile
-     */
+    // ── PROTECTED (JWT required) ──────────────────────────────────────────────
+
     @GetMapping("/api/student/me")
     public ResponseEntity<?> getMe(HttpServletRequest request) {
         try {
@@ -83,25 +47,53 @@ public class StudentAuthController {
             return ResponseEntity.ok(service.getProfile(phone));
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ErrorResponse(e.getMessage()));
+                    .body(new ErrorResponse(e.getMessage()));
         }
     }
 
-    // ── UPDATE PROFILE ────────────────────────────────────────────────────────
-    /**
-     * PUT /api/student/me
-     * Header: Authorization: Bearer <token>
-     * Body: { "cetPercentile": 83.1, "category": "OBC", "gender": "GENERAL",
-     *         "admissionType": "STATE",
-     *         "preferredBranches": "[\"Computer Science\",\"IT\"]",
-     *         "preferredDistricts": "[\"Pune\",\"Nashik\"]" }
-     */
     @PutMapping("/api/student/me")
     public ResponseEntity<?> updateMe(@RequestBody UpdateProfileRequest req,
                                       HttpServletRequest request) {
         try {
             String phone = (String) request.getAttribute("currentUser");
             return ResponseEntity.ok(service.updateProfile(phone, req));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    // ── SHORTLIST ─────────────────────────────────────────────────────────────
+
+    /**
+     * POST /api/student/me/shortlist
+     * Body: { "collegeCode": "06298", "courseName": "Computer Engineering",
+     *         "collegeName": "Sinhgad...", "district": "Pune", "university": "SPPU" }
+     * Adds one college to the student's permanent shortlist.
+     * Returns updated StudentProfile.
+     */
+    @PostMapping("/api/student/me/shortlist")
+    public ResponseEntity<?> addShortlist(@RequestBody ShortlistItem item,
+                                          HttpServletRequest request) {
+        try {
+            String phone = (String) request.getAttribute("currentUser");
+            return ResponseEntity.ok(service.addShortlist(phone, item));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    /**
+     * DELETE /api/student/me/shortlist
+     * Body: { "collegeCode": "06298", "courseName": "Computer Engineering" }
+     * Removes one college from the shortlist.
+     * Returns updated StudentProfile.
+     */
+    @DeleteMapping("/api/student/me/shortlist")
+    public ResponseEntity<?> removeShortlist(@RequestBody RemoveShortlistRequest req,
+                                             HttpServletRequest request) {
+        try {
+            String phone = (String) request.getAttribute("currentUser");
+            return ResponseEntity.ok(service.removeShortlist(phone, req));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
