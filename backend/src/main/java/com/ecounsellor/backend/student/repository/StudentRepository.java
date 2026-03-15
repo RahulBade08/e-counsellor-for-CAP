@@ -12,4 +12,12 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
     boolean existsByPhone(String phone);
 
     boolean existsByCetAppNumber(String cetAppNumber);
+
+    // ── Admin panel queries ───────────────────────────────────────────────────
+
+    /** Count of active students — used in Overview KPI */
+    long countByActiveTrue();
+
+    /** Count of suspended students */
+    long countByActiveFalse();
 }

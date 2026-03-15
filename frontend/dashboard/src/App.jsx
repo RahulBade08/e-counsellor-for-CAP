@@ -1,231 +1,146 @@
 import { useState, useEffect, useCallback } from "react";
+import "./App.css";
 
-// ── Config ────────────────────────────────────────────────────────────────────
-// Change this to your backend URL
-const API_BASE = "http://localhost:8080/api/counselling";
+// ── Config ─────────────────────────────────────────────────────────────────────
+const API_BASE  = "http://localhost:8080/api/counselling";
+const AUTH_BASE = "http://localhost:8080/api/college/auth";
 
-// ── Color palette: deep navy + saffron — professional, Maharashtra-rooted ────
-const STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&family=DM+Mono&display=swap');
+// ── Auth Store ─────────────────────────────────────────────────────────────────
+function useAuth() {
+  const [token,   setToken]   = useState(() => localStorage.getItem("ec_token") || null);
+  const [profile, setProfile] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ec_profile") || "null"); } catch { return null; }
+  });
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  const saveSession = (t, p) => {
+    localStorage.setItem("ec_token",   t);
+    localStorage.setItem("ec_profile", JSON.stringify(p));
+    setToken(t);
+    setProfile(p);
+  };
 
-  :root {
-    --navy:     #0B1D3A;
-    --navy-mid: #142852;
-    --navy-lt:  #1E3A6A;
-    --saffron:  #E8860A;
-    --saffron-lt: #F5A334;
-    --gold:     #FFCA5A;
-    --cream:    #FAF7F2;
-    --white:    #FFFFFF;
-    --gray-100: #F3F4F6;
-    --gray-200: #E5E7EB;
-    --gray-400: #9CA3AF;
-    --gray-600: #4B5563;
-    --gray-800: #1F2937;
-    --green:    #059669;
-    --red:      #DC2626;
-    --blue:     #2563EB;
-    --rising:   #059669;
-    --falling:  #DC2626;
-    --stable:   #D97706;
-    --safe:     #059669;
-    --moderate: #D97706;
-    --risky:    #DC2626;
-  }
+  const logout = () => {
+    localStorage.removeItem("ec_token");
+    localStorage.removeItem("ec_profile");
+    setToken(null);
+    setProfile(null);
+  };
 
-  body { font-family: 'DM Sans', sans-serif; background: var(--cream); color: var(--navy); }
+  const updateProfile = (p) => {
+    localStorage.setItem("ec_profile", JSON.stringify(p));
+    setProfile(p);
+  };
 
-  /* Layout */
-  .app { min-height: 100vh; display: flex; flex-direction: column; }
-  .header {
-    background: var(--navy); color: white; padding: 0 2rem;
-    display: flex; align-items: center; justify-content: space-between;
-    height: 60px; position: sticky; top: 0; z-index: 100;
-    box-shadow: 0 2px 20px rgba(0,0,0,0.3);
-  }
-  .header-logo { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: var(--gold); letter-spacing: -0.5px; }
-  .header-sub  { font-size: 0.75rem; color: var(--gray-400); margin-top: 1px; }
-  .header-code { font-family: 'DM Mono'; font-size: 0.8rem; background: var(--navy-lt); padding: 4px 10px; border-radius: 6px; color: var(--saffron-lt); }
-
-  .main-layout { display: flex; flex: 1; }
-  .sidebar {
-    width: 220px; background: var(--navy-mid); flex-shrink: 0;
-    padding: 1.5rem 0; display: flex; flex-direction: column; gap: 0.25rem;
-    position: sticky; top: 60px; height: calc(100vh - 60px); overflow-y: auto;
-  }
-  .sidebar-section { padding: 0.5rem 1.25rem; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--gray-400); margin-top: 0.75rem; }
-  .nav-item {
-    display: flex; align-items: center; gap: 0.75rem;
-    padding: 0.65rem 1.25rem; cursor: pointer; color: var(--gray-400);
-    font-size: 0.875rem; font-weight: 500; transition: all 0.15s;
-    border-left: 3px solid transparent;
-  }
-  .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
-  .nav-item.active { background: rgba(232,134,10,0.12); color: var(--saffron-lt); border-left-color: var(--saffron); }
-  .nav-icon { font-size: 1rem; width: 1.2rem; text-align: center; }
-
-  .content { flex: 1; padding: 2rem; max-width: 1200px; overflow-x: hidden; }
-
-  /* College picker */
-  .college-bar {
-    background: white; border-radius: 12px; padding: 1rem 1.5rem;
-    display: flex; align-items: center; gap: 1rem; margin-bottom: 2rem;
-    box-shadow: 0 1px 8px rgba(0,0,0,0.06); flex-wrap: wrap;
-  }
-  .college-bar label { font-size: 0.8rem; font-weight: 600; color: var(--gray-600); white-space: nowrap; }
-  .college-bar input {
-    flex: 1; min-width: 200px; padding: 0.5rem 0.875rem; border: 1.5px solid var(--gray-200);
-    border-radius: 8px; font-family: 'DM Mono'; font-size: 0.85rem; color: var(--navy);
-    outline: none; transition: border 0.15s;
-  }
-  .college-bar input:focus { border-color: var(--saffron); }
-  .college-bar select {
-    padding: 0.5rem 0.875rem; border: 1.5px solid var(--gray-200);
-    border-radius: 8px; font-family: 'DM Sans'; font-size: 0.85rem; color: var(--navy);
-    outline: none; background: white; cursor: pointer;
-  }
-  .btn-load {
-    background: var(--saffron); color: white; border: none; padding: 0.55rem 1.25rem;
-    border-radius: 8px; font-weight: 600; font-size: 0.875rem; cursor: pointer;
-    transition: background 0.15s; white-space: nowrap;
-  }
-  .btn-load:hover { background: var(--saffron-lt); }
-  .btn-load:disabled { background: var(--gray-400); cursor: default; }
-
-  /* Page title */
-  .page-title { font-family: 'DM Serif Display', serif; font-size: 1.75rem; color: var(--navy); margin-bottom: 0.35rem; }
-  .page-subtitle { font-size: 0.875rem; color: var(--gray-600); margin-bottom: 1.75rem; }
-
-  /* KPI cards */
-  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-  .kpi-card {
-    background: white; border-radius: 12px; padding: 1.25rem 1.5rem;
-    box-shadow: 0 1px 8px rgba(0,0,0,0.06); border-left: 4px solid var(--saffron);
-  }
-  .kpi-card.blue  { border-left-color: var(--blue); }
-  .kpi-card.green { border-left-color: var(--green); }
-  .kpi-card.gold  { border-left-color: var(--gold); }
-  .kpi-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--gray-400); margin-bottom: 0.4rem; }
-  .kpi-value { font-family: 'DM Serif Display', serif; font-size: 2rem; color: var(--navy); line-height: 1; }
-  .kpi-sub   { font-size: 0.75rem; color: var(--gray-400); margin-top: 0.3rem; }
-
-  /* Cards */
-  .card { background: white; border-radius: 12px; box-shadow: 0 1px 8px rgba(0,0,0,0.06); margin-bottom: 1.5rem; overflow: hidden; }
-  .card-header { padding: 1.1rem 1.5rem; border-bottom: 1px solid var(--gray-100); display: flex; align-items: center; justify-content: space-between; }
-  .card-title { font-weight: 600; font-size: 0.95rem; color: var(--navy); }
-  .card-body  { padding: 1.5rem; }
-
-  /* Section divider */
-  .section-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--saffron); margin-bottom: 0.75rem; margin-top: 1.5rem; }
-
-  /* Tables */
-  .tbl { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  .tbl th { padding: 0.6rem 1rem; background: var(--navy); color: white; text-align: left; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; }
-  .tbl th:first-child { border-radius: 8px 0 0 0; }
-  .tbl th:last-child  { border-radius: 0 8px 0 0; }
-  .tbl td { padding: 0.7rem 1rem; border-bottom: 1px solid var(--gray-100); color: var(--gray-800); vertical-align: middle; }
-  .tbl tr:last-child td { border-bottom: none; }
-  .tbl tr:hover td { background: #FAFBFF; }
-  .tbl td.mono { font-family: 'DM Mono'; font-size: 0.8rem; }
-
-  /* Badges */
-  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 99px; font-size: 0.72rem; font-weight: 600; }
-  .badge-safe     { background: #D1FAE5; color: #065F46; }
-  .badge-moderate { background: #FEF3C7; color: #92400E; }
-  .badge-risky    { background: #FEE2E2; color: #991B1B; }
-  .badge-rising   { background: #D1FAE5; color: #065F46; }
-  .badge-falling  { background: #FEE2E2; color: #991B1B; }
-  .badge-stable   { background: #FEF3C7; color: #92400E; }
-  .badge-blue     { background: #DBEAFE; color: #1E40AF; }
-  .badge-gray     { background: var(--gray-100); color: var(--gray-600); }
-
-  /* Bar chart */
-  .bar-chart { display: flex; flex-direction: column; gap: 0.6rem; }
-  .bar-row { display: flex; align-items: center; gap: 0.75rem; }
-  .bar-label { width: 70px; font-size: 0.78rem; color: var(--gray-600); text-align: right; flex-shrink: 0; }
-  .bar-track { flex: 1; background: var(--gray-100); border-radius: 99px; height: 10px; overflow: hidden; }
-  .bar-fill  { height: 100%; border-radius: 99px; background: var(--saffron); transition: width 0.6s cubic-bezier(.4,0,.2,1); }
-  .bar-fill.blue  { background: var(--blue); }
-  .bar-fill.green { background: var(--green); }
-  .bar-count { width: 40px; font-size: 0.78rem; font-family: 'DM Mono'; color: var(--navy); font-weight: 600; }
-
-  /* Target range banner */
-  .target-banner {
-    background: linear-gradient(135deg, var(--navy) 0%, var(--navy-lt) 100%);
-    border-radius: 12px; padding: 1.25rem 1.5rem; color: white; margin-bottom: 1rem;
-    display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
-  }
-  .target-range-pill {
-    background: var(--saffron); color: white; font-family: 'DM Mono';
-    font-size: 1.1rem; font-weight: 700; padding: 0.4rem 1rem; border-radius: 8px;
-  }
-  .target-rationale { font-size: 0.8rem; color: rgba(255,255,255,0.75); margin-top: 0.4rem; line-height: 1.5; }
-
-  /* Cutoff history cell */
-  .cutoff-cell { display: flex; flex-direction: column; gap: 2px; }
-  .cutoff-val  { font-family: 'DM Mono'; font-size: 0.85rem; font-weight: 600; color: var(--navy); }
-  .cutoff-rnd  { font-size: 0.68rem; color: var(--gray-400); }
-
-  /* Empty/loading */
-  .empty { padding: 3rem; text-align: center; color: var(--gray-400); font-size: 0.9rem; }
-  .loading { padding: 2rem; text-align: center; }
-  .spinner {
-    width: 32px; height: 32px; border: 3px solid var(--gray-200);
-    border-top-color: var(--saffron); border-radius: 50%;
-    animation: spin 0.7s linear infinite; display: inline-block;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .error-msg { background: #FEE2E2; color: #991B1B; border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.85rem; margin-bottom: 1rem; }
-
-  /* Pill filter tabs */
-  .pill-tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  .pill-tab  { padding: 0.35rem 0.875rem; border-radius: 99px; font-size: 0.8rem; font-weight: 500; cursor: pointer; border: 1.5px solid var(--gray-200); background: white; color: var(--gray-600); transition: all 0.15s; }
-  .pill-tab.active { border-color: var(--saffron); background: var(--saffron); color: white; }
-
-  /* Pool card */
-  .pool-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
-  @media (max-width: 700px) { .pool-grid { grid-template-columns: 1fr; } }
-  .pool-card { background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 1px 6px rgba(0,0,0,0.07); text-align: center; }
-  .pool-num  { font-family: 'DM Serif Display', serif; font-size: 2.5rem; color: var(--navy); }
-  .pool-lbl  { font-size: 0.75rem; color: var(--gray-500); font-weight: 500; margin-top: 0.25rem; }
-  .pool-sub  { font-size: 0.7rem; color: var(--gray-400); margin-top: 0.5rem; }
-`;
-
-// ── Data fetching hook ────────────────────────────────────────────────────────
-function useFetch(url) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  const fetch_ = useCallback(async () => {
-    if (!url) return;
-    setLoading(true); setError(null); setData(null);
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setData(await res.json());
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
-  }, [url]);
-
-  useEffect(() => { fetch_(); }, [fetch_]);
-  return { data, loading, error, refetch: fetch_ };
+  return { token, profile, saveSession, logout, updateProfile };
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── API helpers ────────────────────────────────────────────────────────────────
+async function apiPost(url, body, token) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res  = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({ error: "Invalid response" }));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
 
-function Spinner() { return <div className="loading"><div className="spinner" /></div>; }
+async function apiPut(url, body, token) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res  = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({ error: "Invalid response" }));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
 
-function BarChart({ items, maxVal, colorClass }) {
+// ── useFetch hook ───────────────────────────────────────────────────────────────
+// refreshKey: increment to force a new fetch — used by Refresh button
+function useFetch(url, token) {
+  const [data,       setData]       = useState(null);
+  const [loading,    setLoading]    = useState(false);
+  const [error,      setError]      = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
+
+  useEffect(() => {
+    if (!url) return;
+    let cancelled = false;
+    setLoading(true); setError(null); setData(null);
+    (async () => {
+      try {
+        const headers = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        // cache: "no-store" ensures browser never serves a cached response
+        const res = await fetch(url, { headers, cache: "no-store" });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(e.error || `HTTP ${res.status}`);
+        }
+        if (!cancelled) setData(await res.json());
+      } catch (e) { if (!cancelled) setError(e.message); }
+      finally     { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  // refreshKey in deps causes fresh fetch on every refresh() call
+  }, [url, token, refreshKey]);
+
+  return { data, loading, error, refresh };
+}
+
+// ── Refresh button ──────────────────────────────────────────────────────────────
+function RefreshBtn({ onClick, loading }) {
+  return (
+    <button onClick={onClick} disabled={loading}
+      style={{
+        display:"inline-flex", alignItems:"center", gap:".3rem",
+        padding:".28rem .7rem", fontSize:".76rem", fontWeight:600,
+        background:"transparent", border:"1px solid var(--border)",
+        borderRadius:"6px", cursor: loading ? "not-allowed" : "pointer",
+        color:"var(--text-muted)", transition:"border-color .15s",
+      }}>
+      <span style={{ display:"inline-block",
+        animation: loading ? "spin 1s linear infinite" : "none" }}>↻</span>
+      {loading ? "Refreshing…" : "Refresh"}
+    </button>
+  );
+}
+
+// ── Shared UI ──────────────────────────────────────────────────────────────────
+function Spinner() {
+  return <div className="spinner-wrap"><div className="spinner" /></div>;
+}
+
+function Alert({ type, children }) {
+  const icons = { error: "⚠️", success: "✅", info: "ℹ️", warning: "⚡" };
+  return (
+    <div className={`alert alert-${type}`}>
+      <span>{icons[type]}</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function Badge({ type, children }) {
+  return <span className={`badge badge-${type || "muted"}`}>{children}</span>;
+}
+
+function TrendBadge({ value }) {
+  if (!value) return <Badge type="muted">—</Badge>;
+  const t = value.toUpperCase();
+  return <Badge type={t === "RISING" ? "rising" : t === "FALLING" ? "falling" : "stable"}>{t}</Badge>;
+}
+
+function BarChart({ items, colorClass }) {
+  const max = Math.max(...items.map(i => i.value), 1);
   return (
     <div className="bar-chart">
       {items.map(({ label, value }) => (
         <div className="bar-row" key={label}>
           <div className="bar-label">{label}</div>
           <div className="bar-track">
-            <div className="bar-fill" style={{ width: `${maxVal ? (value / maxVal) * 100 : 0}%` }} />
+            <div className={`bar-fill ${colorClass || ""}`}
+                 style={{ width: `${(value / max) * 100}%` }} />
           </div>
           <div className="bar-count">{value.toLocaleString()}</div>
         </div>
@@ -234,102 +149,356 @@ function BarChart({ items, maxVal, colorClass }) {
   );
 }
 
-function Badge({ text, type }) {
-  const cls = { SAFE:"badge-safe", MODERATE:"badge-moderate", RISKY:"badge-risky",
-                RISING:"badge-rising", FALLING:"badge-falling", STABLE:"badge-stable" }[text] || "badge-gray";
-  return <span className={`badge ${cls}`}>{text}</span>;
+// ══════════════════════════════════════════════════════════════════════════════
+// LOGIN PAGE
+// ══════════════════════════════════════════════════════════════════════════════
+function LoginPage({ onLogin, onGoRegister }) {
+  const [email,    setEmail]    = useState("");
+  const [password, setPassword] = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState("");
+
+  const submit = async () => {
+    setError("");
+    if (!email || !password) { setError("Email and password are required."); return; }
+    setLoading(true);
+    try {
+      const data = await apiPost(`${AUTH_BASE}/login`, { email, password });
+      onLogin(data.token, data.profile);
+    } catch (e) { setError(e.message); }
+    finally     { setLoading(false); }
+  };
+
+  return (
+    <div className="auth-page">
+      <div className="auth-left">
+        <div className="auth-brand">
+          <div className="auth-brand-icon">🎓</div>
+          <div className="auth-brand-name">E-<span>Counsellor</span></div>
+        </div>
+        <div className="auth-hero-title">
+          Your College's<br />
+          Admission Intelligence<br />
+          Dashboard
+        </div>
+        <div className="auth-hero-sub">
+          Maharashtra MHT-CET counselling data — who's interested in your college,
+          which students to target, and where your cutoffs are headed.
+        </div>
+        <div className="auth-features">
+          {[
+            ["👥", "Interested Students",    "See who viewed & shortlisted your college from the app"],
+            ["🎯", "Students to Target",     "Find eligible students who haven't discovered you yet"],
+            ["📊", "Cutoff Target Ranges",   "Data-driven percentile ranges per branch & category"],
+            ["📈", "Cutoff History + ML",    "Historical cutoffs with ML predictions and trend analysis"],
+          ].map(([icon, label, desc]) => (
+            <div className="auth-feature" key={label}>
+              <div className="auth-feature-icon">{icon}</div>
+              <div className="auth-feature-text">
+                <div className="auth-feature-label">{label}</div>
+                <div className="auth-feature-desc">{desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="auth-right">
+        <div className="auth-form-wrap">
+          <div className="auth-form-title">Welcome Back</div>
+          <div className="auth-form-sub">Login to your college counselling dashboard</div>
+
+          {error && <Alert type="error">{error}</Alert>}
+
+          <div className="form-group">
+            <label className="form-label">College Email</label>
+            <input className="form-input" type="email"
+                   placeholder="principal@college.ac.in"
+                   value={email} onChange={e => setEmail(e.target.value)}
+                   onKeyDown={e => e.key === "Enter" && submit()} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <input className="form-input" type="password"
+                   placeholder="Min 6 characters"
+                   value={password} onChange={e => setPassword(e.target.value)}
+                   onKeyDown={e => e.key === "Enter" && submit()} />
+          </div>
+
+          <button className="btn btn-primary" onClick={submit} disabled={loading}
+                  style={{ marginTop: ".5rem" }}>
+            {loading ? "Logging in…" : "Login to Dashboard →"}
+          </button>
+
+          <div className="divider">or</div>
+
+          <div style={{ textAlign: "center", fontSize: ".875rem", color: "var(--text-muted)" }}>
+            New college?{" "}
+            <button className="link-btn" onClick={onGoRegister}>Register your college</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// PAGE 1: INTERESTED STUDENTS
-// ═════════════════════════════════════════════════════════════════════════════
-function InterestedPage({ collegeCode }) {
-  const { data, loading, error } = useFetch(
-    collegeCode ? `${API_BASE}/${collegeCode}/interested` : null
+// ══════════════════════════════════════════════════════════════════════════════
+// REGISTER PAGE
+// ══════════════════════════════════════════════════════════════════════════════
+function RegisterPage({ onLogin, onGoLogin }) {
+  const [f, setF] = useState({ collegeCode: "", email: "", password: "", confirm: "", name: "", phone: "" });
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+  const [done,    setDone]    = useState(false);
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const submit = async () => {
+    setError("");
+    if (!f.collegeCode)        { setError("DTE college code is required."); return; }
+    if (!f.email)              { setError("Email is required."); return; }
+    if (f.password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    if (f.password !== f.confirm) { setError("Passwords do not match."); return; }
+    setLoading(true);
+    try {
+      const data = await apiPost(`${AUTH_BASE}/register`, {
+        collegeCode: f.collegeCode.trim(),
+        email: f.email.trim().toLowerCase(),
+        password: f.password,
+        contactPersonName: f.name.trim(),
+        contactPhone: f.phone.trim(),
+      });
+      if (data.role === "PENDING") { setDone(true); }
+      else { onLogin(data.token, data.profile); }
+    } catch (e) { setError(e.message); }
+    finally     { setLoading(false); }
+  };
+
+  return (
+    <div className="auth-page">
+      <div className="auth-left">
+        <div className="auth-brand">
+          <div className="auth-brand-icon">🎓</div>
+          <div className="auth-brand-name">E-<span>Counsellor</span></div>
+        </div>
+        <div className="auth-hero-title">Register Your College</div>
+        <div className="auth-hero-sub">
+          Get access to your college's counselling intelligence dashboard.
+          One account per DTE college code.
+        </div>
+        <div className="auth-features">
+          {[
+            ["🏫", "One account per DTE code",   "Linked directly to your DTE registration"],
+            ["🔒", "Secure JWT authentication",  "Your data stays private — only you can see it"],
+            ["✅", "Admin verification",         "Accounts activated within 24 hours"],
+            ["📞", "Contact person details",     "HOD / Principal for admin verification"],
+          ].map(([icon, label, desc]) => (
+            <div className="auth-feature" key={label}>
+              <div className="auth-feature-icon">{icon}</div>
+              <div className="auth-feature-text">
+                <div className="auth-feature-label">{label}</div>
+                <div className="auth-feature-desc">{desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="auth-right">
+        <div className="auth-form-wrap">
+          <div className="auth-form-title">Create Account</div>
+          <div className="auth-form-sub">Enter your DTE details to register</div>
+
+          {error && <Alert type="error">{error}</Alert>}
+          {done  && (
+            <Alert type="success">
+              Registration submitted! Pending admin approval.
+              <div style={{ marginTop: ".5rem" }}>
+                <button className="link-btn" onClick={onGoLogin}>← Back to Login</button>
+              </div>
+            </Alert>
+          )}
+
+          {!done && (
+            <>
+              <div className="form-group">
+                <label className="form-label">DTE College Code</label>
+                <input className="form-input mono" placeholder="e.g. 06155"
+                       value={f.collegeCode} onChange={e => set("collegeCode", e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Official Email</label>
+                <input className="form-input" type="email" placeholder="principal@college.ac.in"
+                       value={f.email} onChange={e => set("email", e.target.value)} />
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Password</label>
+                  <input className="form-input" type="password" placeholder="Min 6 characters"
+                         value={f.password} onChange={e => set("password", e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Confirm</label>
+                  <input className="form-input" type="password" placeholder="Repeat"
+                         value={f.confirm} onChange={e => set("confirm", e.target.value)} />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">
+                  Contact Person
+                  <span style={{ fontWeight: 400, textTransform: "none", fontSize: ".72rem", color: "var(--text-muted)", marginLeft: ".35rem" }}>
+                    (HOD / Principal)
+                  </span>
+                </label>
+                <input className="form-input" placeholder="Dr. Ramesh Patil"
+                       value={f.name} onChange={e => set("name", e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">
+                  Contact Phone
+                  <span style={{ fontWeight: 400, textTransform: "none", fontSize: ".72rem", color: "var(--text-muted)", marginLeft: ".35rem" }}>
+                    (optional)
+                  </span>
+                </label>
+                <input className="form-input mono" type="tel" placeholder="10-digit number"
+                       value={f.phone} onChange={e => set("phone", e.target.value)} />
+              </div>
+              <button className="btn btn-primary" onClick={submit} disabled={loading}
+                      style={{ marginTop: ".375rem" }}>
+                {loading ? "Registering…" : "Register College →"}
+              </button>
+              <div className="divider">or</div>
+              <div style={{ textAlign: "center", fontSize: ".875rem", color: "var(--text-muted)" }}>
+                Already registered?{" "}
+                <button className="link-btn" onClick={onGoLogin}>Login here</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TOPBAR + SIDEBAR
+// ══════════════════════════════════════════════════════════════════════════════
+function Topbar({ profile, onNav, onLogout }) {
+  return (
+    <header className="topbar">
+      <div className="topbar-logo">
+        <div className="topbar-logo-icon">🎓</div>
+        <div className="topbar-brand-name">E-<span>Counsellor</span></div>
+      </div>
+      <div className="topbar-sep" />
+      <div className="topbar-college">
+        <div className="topbar-college-name">{profile?.collegeName || "College Portal"}</div>
+        <div className="topbar-college-code">{profile?.collegeCode}</div>
+      </div>
+      <div className="topbar-right">
+        <span className="topbar-pill">{profile?.collegeCode}</span>
+        <button className="topbar-avatar-btn" onClick={() => onNav("profile")}
+                title={profile?.contactPersonName || "Profile"}>
+          {(profile?.collegeName || profile?.collegeCode || "C")[0].toUpperCase()}
+        </button>
+        <button className="topbar-logout-btn" onClick={onLogout}>Logout</button>
+      </div>
+    </header>
+  );
+}
+
+const NAV = [
+  { id: "interested",     icon: "👥", label: "Interested Students" },
+  { id: "target-pool",    icon: "🎯", label: "Students to Target" },
+  { id: "target-ranges",  icon: "📊", label: "Cutoff Target Ranges" },
+  { id: "cutoff-history", icon: "📈", label: "Cutoff History + ML" },
+  { id: "profile",        icon: "🏫", label: "College Profile" },
+];
+
+function Sidebar({ active, onNav }) {
+  return (
+    <nav className="sidebar">
+      <div className="sidebar-section">Dashboard</div>
+      {NAV.map(n => (
+        <div key={n.id}
+             className={`nav-item ${active === n.id ? "active" : ""}`}
+             onClick={() => onNav(n.id)}>
+          <span className="nav-icon">{n.icon}</span>
+          {n.label}
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGE: INTERESTED STUDENTS
+// ══════════════════════════════════════════════════════════════════════════════
+function InterestedPage({ code, token }) {
+  const { data, loading, error, refresh } = useFetch(code ? `${API_BASE}/${code}/interested` : null, token);
   const [activeBranch, setActiveBranch] = useState("ALL");
 
-  if (!collegeCode) return <div className="empty">Enter a college code above and click Load.</div>;
   if (loading) return <Spinner />;
-  if (error)   return <div className="error-msg">⚠ {error} — Is the backend running?</div>;
+  if (error)   return <><Alert type="error">{error}</Alert><div style={{marginTop:"1rem"}}><RefreshBtn onClick={refresh} loading={loading} /></div></>;
   if (!data)   return null;
 
-  const branches = data.byBranch || [];
-  const maxShortlist = Math.max(...branches.map(b => b.shortlists), 1);
-  const maxViews     = Math.max(...branches.map(b => b.views), 1);
-  const bands        = data.percentileBands || [];
-  const maxBand      = Math.max(...bands.map(b => b.count), 1);
+  const branches   = data.byBranch        || [];
+  const bands      = data.percentileBands || [];
+  const categories = data.byCategory      || [];
+  const convRate   = data.totalViews > 0
+    ? `${(data.totalShortlists / data.totalViews * 100).toFixed(1)}%` : "—";
 
-  const filteredBranch = activeBranch === "ALL"
-    ? null
-    : branches.find(b => b.courseCode === activeBranch);
+  const filtered = activeBranch === "ALL"
+    ? branches : branches.filter(b => b.courseCode === activeBranch);
 
   return (
     <>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:".75rem"}}>
+        <RefreshBtn onClick={refresh} loading={loading} />
+      </div>
       <div className="kpi-grid">
-        <div className="kpi-card">
+        <div className="kpi">
           <div className="kpi-label">Total Views</div>
           <div className="kpi-value">{(data.totalViews || 0).toLocaleString()}</div>
-          <div className="kpi-sub">College page views</div>
+          <div className="kpi-sub">College page views from student app</div>
         </div>
-        <div className="kpi-card blue">
+        <div className="kpi accent">
           <div className="kpi-label">Shortlisted</div>
           <div className="kpi-value">{(data.totalShortlists || 0).toLocaleString()}</div>
-          <div className="kpi-sub">Students saved your college</div>
+          <div className="kpi-sub">Students saved your college ⭐</div>
         </div>
-        <div className="kpi-card green">
+        <div className="kpi success">
           <div className="kpi-label">Conversion</div>
-          <div className="kpi-value">
-            {data.totalViews > 0
-              ? `${Math.round(data.totalShortlists / data.totalViews * 1000) / 10}%`
-              : "—"}
-          </div>
-          <div className="kpi-sub">Views → shortlists</div>
+          <div className="kpi-value">{convRate}</div>
+          <div className="kpi-sub">Views that became shortlists</div>
         </div>
-        <div className="kpi-card gold">
+        <div className="kpi muted">
           <div className="kpi-label">Active Branches</div>
           <div className="kpi-value">{branches.length}</div>
-          <div className="kpi-sub">Branches with interest</div>
+          <div className="kpi-sub">Branches with student interest</div>
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Shortlists by Branch</div>
-          <span className="badge badge-blue">{branches.length} branches</span>
-        </div>
-        <div className="card-body">
-          {branches.length === 0
-            ? <div className="empty" style={{padding:"1rem"}}>No shortlist data yet. Share the app with students!</div>
-            : <BarChart items={branches.map(b => ({ label: b.courseName?.split(" ")[0] || b.courseCode, value: b.shortlists }))} maxVal={maxShortlist} />
-          }
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
+      <div className="two-col">
         <div className="card">
-          <div className="card-header"><div className="card-title">Percentile Band Distribution</div></div>
+          <div className="card-header">
+            <div className="card-title">Percentile Band Distribution</div>
+            <Badge type="muted">from views</Badge>
+          </div>
           <div className="card-body">
             {bands.length === 0
-              ? <div className="empty" style={{padding:"1rem"}}>No data yet</div>
-              : <BarChart
-                  items={bands.map(b => ({ label: b.band, value: b.count }))}
-                  maxVal={maxBand} colorClass="blue"
-                />
-            }
+              ? <div className="empty-state"><div className="empty-state-icon">📭</div>No view data yet</div>
+              : <BarChart items={bands.map(b => ({ label: b.band, value: b.count }))} />}
           </div>
         </div>
         <div className="card">
-          <div className="card-header"><div className="card-title">Category Breakdown</div></div>
+          <div className="card-header">
+            <div className="card-title">Category Breakdown</div>
+            <Badge type="muted">all views</Badge>
+          </div>
           <div className="card-body">
-            {(data.byCategory || []).length === 0
-              ? <div className="empty" style={{padding:"1rem"}}>No data yet</div>
-              : <BarChart
-                  items={(data.byCategory || []).map(c => ({ label: c.category, value: c.count }))}
-                  maxVal={Math.max(...(data.byCategory || []).map(c => c.count), 1)}
-                  colorClass="green"
-                />
-            }
+            {categories.length === 0
+              ? <div className="empty-state"><div className="empty-state-icon">📭</div>No data yet</div>
+              : <BarChart items={categories.map(c => ({ label: c.category, value: c.count }))} colorClass="accent" />}
           </div>
         </div>
       </div>
@@ -337,41 +506,65 @@ function InterestedPage({ collegeCode }) {
       {branches.length > 0 && (
         <div className="card">
           <div className="card-header">
-            <div className="card-title">Branch Detail — Category Breakdown</div>
+            <div className="card-title">Branch-wise Shortlists</div>
+            <Badge type="primary">{branches.length} branches</Badge>
           </div>
           <div className="card-body">
             <div className="pill-tabs">
               <div className={`pill-tab ${activeBranch === "ALL" ? "active" : ""}`}
-                   onClick={() => setActiveBranch("ALL")}>All Branches</div>
+                   onClick={() => setActiveBranch("ALL")}>All</div>
               {branches.map(b => (
                 <div key={b.courseCode}
                      className={`pill-tab ${activeBranch === b.courseCode ? "active" : ""}`}
                      onClick={() => setActiveBranch(b.courseCode)}>
-                  {b.courseName?.split(" ")[0] || b.courseCode}
+                  {(b.courseName || b.courseCode)?.split(" ").slice(0, 2).join(" ")}
                 </div>
               ))}
             </div>
-            <table className="tbl">
-              <thead><tr>
-                <th>Branch</th><th>Shortlists</th><th>Views</th><th>Conversion</th><th>Top Category</th>
-              </tr></thead>
-              <tbody>
-                {(activeBranch === "ALL" ? branches : branches.filter(b => b.courseCode === activeBranch))
-                  .map(b => (
+            <div style={{ overflowX: "auto" }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Branch</th>
+                    <th>Shortlists</th>
+                    <th>Views</th>
+                    <th>Conversion</th>
+                    <th>Top Category</th>
+                    <th>All Categories</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(b => (
                     <tr key={b.courseCode}>
-                      <td><div style={{fontWeight:600,color:"var(--navy)"}}>{b.courseName}</div>
-                          <div style={{fontSize:"0.72rem",color:"var(--gray-400)",fontFamily:"'DM Mono'"}}>{b.courseCode}</div></td>
-                      <td className="mono">{b.shortlists.toLocaleString()}</td>
-                      <td className="mono">{b.views.toLocaleString()}</td>
-                      <td><span className={`badge ${b.conversionRate > 30 ? "badge-safe" : b.conversionRate > 15 ? "badge-moderate" : "badge-gray"}`}>{b.conversionRate}%</span></td>
-                      <td>{b.byCategory?.[0]
-                        ? <><span style={{fontWeight:600}}>{b.byCategory[0].category}</span>
-                            <span style={{color:"var(--gray-400)",marginLeft:"0.5rem",fontSize:"0.78rem"}}>({b.byCategory[0].count})</span></>
-                        : "—"}</td>
+                      <td>
+                        <div className="branch-name">{b.courseName}</div>
+                        <div className="branch-code">{b.courseCode}</div>
+                      </td>
+                      <td className="mono">{(b.shortlists || 0).toLocaleString()}</td>
+                      <td className="mono">{(b.views || 0).toLocaleString()}</td>
+                      <td>
+                        <Badge type={b.conversionRate > 30 ? "success" : b.conversionRate > 15 ? "warning" : "muted"}>
+                          {b.conversionRate}%
+                        </Badge>
+                      </td>
+                      <td>
+                        {b.byCategory?.[0]
+                          ? <><span style={{ fontWeight: 700 }}>{b.byCategory[0].category}</span>
+                              <span className="text-muted"> ({b.byCategory[0].count})</span></>
+                          : "—"}
+                      </td>
+                      <td>
+                        <div className="flex flex-wrap gap-1">
+                          {(b.byCategory || []).map(c => (
+                            <span key={c.category} className="cat-chip">{c.category}: {c.count}</span>
+                          ))}
+                        </div>
+                      </td>
                     </tr>
                   ))}
-              </tbody>
-            </table>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -379,175 +572,231 @@ function InterestedPage({ collegeCode }) {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// PAGE 2: TARGET POOL
-// ═════════════════════════════════════════════════════════════════════════════
-function TargetPoolPage({ collegeCode }) {
-  const [courseCode, setCourseCode] = useState("");
-  const [capCode, setCapCode]       = useState("GOPENH");
-  const [round, setRound]           = useState(4);
-  const [fetchUrl, setFetchUrl]     = useState(null);
-  const { data, loading, error }    = useFetch(fetchUrl);
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGE: TARGET POOL
+// ══════════════════════════════════════════════════════════════════════════════
+const CAP_CODES = ["GOPENH","GOBCS","GOSC","GOST","GONT1S","GONT2S","GONT3S","LOPEN","EWS","TFWS"];
 
-  if (!collegeCode) return <div className="empty">Enter a college code above and click Load.</div>;
+function TargetPoolPage({ code, token }) {
+  const [form, setForm] = useState({ courseCode: "", cap: "GOPENH", round: 4 });
+  const [url,  setUrl]  = useState(null);
+  const { data, loading, error, refresh } = useFetch(url, token);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const capCodes = ["GOPENH","GOBCS","GOSC","GOST","GONT1S","GONT2S","GONT3S","LOPEN","EWS","TFWS"];
+  const analyze = () => {
+    if (!form.courseCode.trim()) return;
+    setUrl(`${API_BASE}/${code}/target-pool?courseCode=${form.courseCode.trim()}&capCategoryCode=${form.cap}&round=${form.round}`);
+  };
 
   return (
     <>
       <div className="card">
-        <div className="card-header"><div className="card-title">Check Student Pool for a Branch</div></div>
+        <div className="card-header">
+          <div className="card-title">🎯 Analyze Student Pool for a Branch</div>
+        </div>
         <div className="card-body">
-          <div style={{ display:"flex", gap:"1rem", flexWrap:"wrap", alignItems:"flex-end" }}>
-            <div>
-              <div className="section-label">Course Code</div>
-              <input style={{ padding:"0.5rem 0.875rem", border:"1.5px solid var(--gray-200)", borderRadius:"8px", fontFamily:"'DM Mono'", fontSize:"0.85rem", width:"140px", outline:"none" }}
-                     placeholder="e.g. 101"
-                     value={courseCode} onChange={e => setCourseCode(e.target.value)} />
+          <div className="filter-row">
+            <div className="filter-group">
+              <div className="filter-label">Course Code</div>
+              <input className="form-input mono" style={{ width: 140 }} placeholder="e.g. 101"
+                     value={form.courseCode} onChange={e => set("courseCode", e.target.value)}
+                     onKeyDown={e => e.key === "Enter" && analyze()} />
             </div>
-            <div>
-              <div className="section-label">Category Code</div>
-              <select style={{ padding:"0.5rem 0.875rem", border:"1.5px solid var(--gray-200)", borderRadius:"8px", fontFamily:"'DM Sans'", fontSize:"0.85rem", background:"white", outline:"none" }}
-                      value={capCode} onChange={e => setCapCode(e.target.value)}>
-                {capCodes.map(c => <option key={c} value={c}>{c}</option>)}
+            <div className="filter-group">
+              <div className="filter-label">CAP Category</div>
+              <select className="form-select" style={{ width: 148 }}
+                      value={form.cap} onChange={e => set("cap", e.target.value)}>
+                {CAP_CODES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div>
-              <div className="section-label">Round</div>
-              <select style={{ padding:"0.5rem 0.875rem", border:"1.5px solid var(--gray-200)", borderRadius:"8px", fontFamily:"'DM Sans'", fontSize:"0.85rem", background:"white", outline:"none" }}
-                      value={round} onChange={e => setRound(Number(e.target.value))}>
+            <div className="filter-group">
+              <div className="filter-label">Round</div>
+              <select className="form-select" style={{ width: 120 }}
+                      value={form.round} onChange={e => set("round", Number(e.target.value))}>
                 {[1,2,3,4].map(r => <option key={r} value={r}>Round {r}</option>)}
               </select>
             </div>
-            <button className="btn-load" style={{ marginBottom:"0" }}
-                    onClick={() => setFetchUrl(`${API_BASE}/${collegeCode}/target-pool?courseCode=${courseCode}&capCategoryCode=${capCode}&round=${round}`)}>
-              Analyze Pool
-            </button>
+            <div className="filter-group">
+              <div className="filter-label">&nbsp;</div>
+              <button className="btn btn-accent" onClick={analyze} disabled={!form.courseCode.trim()}>
+                Analyze Pool
+              </button>
+            </div>
+            {data && (
+              <div className="filter-group">
+                <div className="filter-label">&nbsp;</div>
+                <RefreshBtn onClick={refresh} loading={loading} />
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       {loading && <Spinner />}
-      {error && <div className="error-msg">⚠ {error}</div>}
+      {error   && <Alert type="error">{error}</Alert>}
+
       {data && (
         <>
           <div className="target-banner">
             <div>
-              <div style={{ fontSize:"0.7rem", color:"rgba(255,255,255,0.6)", textTransform:"uppercase", letterSpacing:"1px", marginBottom:"0.4rem" }}>Recommended Target Percentile Range</div>
-              <div className="target-range-pill">{data.targetMin} – {data.targetMax}</div>
-              <div className="target-rationale">{data.note}</div>
+              <div className="target-label">Recommended Percentile Range to Target</div>
+              <div className="range-pill">{data.targetMin} – {data.targetMax}</div>
+              <div className="target-note">{data.note}</div>
             </div>
-            <div style={{ textAlign:"right" }}>
-              <div style={{ fontSize:"0.7rem", color:"rgba(255,255,255,0.6)", marginBottom:"0.25rem" }}>{data.capCategoryCode}</div>
-              <div style={{ fontFamily:"'DM Mono'", fontSize:"1.1rem", color:"var(--gold)" }}>Round {round}</div>
+            <div style={{ textAlign: "right" }}>
+              <div className="target-label">{data.capCategoryCode}</div>
+              <div className="mono" style={{ color: "#FFD54F", fontSize: "1rem", fontWeight: 700, marginTop: ".25rem" }}>
+                Round {form.round}
+              </div>
             </div>
           </div>
+
           <div className="pool-grid">
             <div className="pool-card">
               <div className="pool-num">{(data.estimatedEligibleInApp || 0).toLocaleString()}</div>
-              <div className="pool-lbl">Eligible Students in App</div>
-              <div className="pool-sub">Viewed any college in this percentile+category range</div>
+              <div className="pool-lbl">Eligible in App</div>
+              <div className="pool-sub">Students using the app with matching percentile + category</div>
             </div>
-            <div className="pool-card" style={{ border:"2px solid var(--blue)" }}>
-              <div className="pool-num" style={{ color:"var(--blue)" }}>{(data.alreadyShortlistedUs || 0).toLocaleString()}</div>
-              <div className="pool-lbl">Already Shortlisted You</div>
-              <div className="pool-sub">Strong intent — already showing interest</div>
+            <div className="pool-card blue">
+              <div className="pool-num blue">{(data.alreadyShortlistedUs || 0).toLocaleString()}</div>
+              <div className="pool-lbl">Already Shortlisted You ⭐</div>
+              <div className="pool-sub">Strong intent — already interested in your college</div>
             </div>
-            <div className="pool-card" style={{ border:"2px solid var(--saffron)" }}>
-              <div className="pool-num" style={{ color:"var(--saffron)" }}>{(data.notYetAware || 0).toLocaleString()}</div>
-              <div className="pool-lbl">Not Yet Aware of You</div>
-              <div className="pool-sub">Eligible but haven't shortlisted — your outreach target</div>
+            <div className="pool-card orange">
+              <div className="pool-num orange">{(data.notYetAware || 0).toLocaleString()}</div>
+              <div className="pool-lbl">Not Yet Aware 🎯</div>
+              <div className="pool-sub">Eligible students who haven't shortlisted you — outreach target</div>
             </div>
           </div>
         </>
+      )}
+
+      {!data && !loading && !error && (
+        <div className="empty-state">
+          <div className="empty-state-icon">🔍</div>
+          Enter a course code above and click Analyze Pool
+        </div>
       )}
     </>
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// PAGE 3: TARGET RANGES
-// ═════════════════════════════════════════════════════════════════════════════
-function TargetRangesPage({ collegeCode, round }) {
-  const { data, loading, error } = useFetch(
-    collegeCode ? `${API_BASE}/${collegeCode}/target-ranges?round=${round}` : null
-  );
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGE: TARGET RANGES
+// ══════════════════════════════════════════════════════════════════════════════
+function TargetRangesPage({ code, token }) {
+  const [round,  setRound]  = useState(4);
   const [filter, setFilter] = useState("ALL");
+  const { data, loading, error, refresh } = useFetch(
+    code ? `${API_BASE}/${code}/target-ranges?round=${round}` : null, token
+  );
 
-  if (!collegeCode) return <div className="empty">Enter a college code above and click Load.</div>;
   if (loading) return <Spinner />;
-  if (error)   return <div className="error-msg">⚠ {error}</div>;
-  if (!data)   return null;
+  if (error)   return <><Alert type="error">{error}</Alert><div style={{marginTop:"1rem"}}><RefreshBtn onClick={refresh} loading={loading} /></div></>;
 
-  const branches = data.branches || [];
-  const categories = ["ALL", ...new Set(branches.map(b => b.category).filter(Boolean))];
+  const branches = data?.branches || [];
+  const cats     = ["ALL", ...new Set(branches.map(b => b.category).filter(Boolean))];
   const filtered = filter === "ALL" ? branches : branches.filter(b => b.category === filter);
 
   return (
     <>
-      <div className="kpi-grid">
-        <div className="kpi-card">
-          <div className="kpi-label">College</div>
-          <div className="kpi-value" style={{ fontSize:"1.2rem", lineHeight:"1.3" }}>{data.collegeName}</div>
-          <div className="kpi-sub">Round {data.round} data</div>
+      {data && (
+        <div className="kpi-grid">
+          <div className="kpi">
+            <div className="kpi-label">College</div>
+            <div className="kpi-value" style={{ fontSize: "1.1rem" }}>{data.collegeName}</div>
+            <div className="kpi-sub">Round {data.round} analysis</div>
+          </div>
+          <div className="kpi accent">
+            <div className="kpi-label">Branch-Category Combos</div>
+            <div className="kpi-value">{branches.length}</div>
+            <div className="kpi-sub">With historical cutoff data</div>
+          </div>
+          <div className="kpi success">
+            <div className="kpi-label">Rising Branches</div>
+            <div className="kpi-value">
+              {branches.filter(b => (b.predictedCutoff || 0) > (b.lastRoundCutoff || 0) + .5).length}
+            </div>
+            <div className="kpi-sub">Trending upward cutoff</div>
+          </div>
         </div>
-        <div className="kpi-card blue">
-          <div className="kpi-label">Branch-Category combos</div>
-          <div className="kpi-value">{branches.length}</div>
-          <div className="kpi-sub">With historical cutoff data</div>
-        </div>
-        <div className="kpi-card green">
-          <div className="kpi-label">Rising Branches</div>
-          <div className="kpi-value">{branches.filter(b => b.predictionConfidence === "RISING" || (b.predictedCutoff > b.lastRoundCutoff + 0.5)).length}</div>
-          <div className="kpi-sub">Cutoff trending up</div>
-        </div>
-      </div>
+      )}
 
-      <div className="pill-tabs">
-        {categories.map(c => (
-          <div key={c} className={`pill-tab ${filter === c ? "active" : ""}`} onClick={() => setFilter(c)}>{c}</div>
-        ))}
+      <div className="flex gap-3" style={{ alignItems: "flex-end", flexWrap: "wrap", marginBottom: "1.25rem" }}>
+        <div className="filter-group">
+          <div className="filter-label">Round</div>
+          <select className="form-select" style={{ width: 130 }}
+                  value={round} onChange={e => setRound(Number(e.target.value))}>
+            {[1,2,3,4].map(r => <option key={r} value={r}>Round {r}</option>)}
+          </select>
+        </div>
+        <div className="filter-group">
+          <div className="filter-label">&nbsp;</div>
+          <RefreshBtn onClick={refresh} loading={loading} />
+        </div>
+        <div className="pill-tabs" style={{ marginBottom: 0 }}>
+          {cats.map(c => (
+            <div key={c} className={`pill-tab ${filter === c ? "active" : ""}`}
+                 onClick={() => setFilter(c)}>{c}</div>
+          ))}
+        </div>
       </div>
 
       <div className="card">
         <div className="card-header">
           <div className="card-title">Branch-wise Target Ranges</div>
-          <span className="badge badge-blue">Round {data.round}</span>
+          {data && <Badge type="primary">Round {data.round}</Badge>}
         </div>
-        <div className="card-body" style={{ padding: 0 }}>
+        <div style={{ overflowX: "auto" }}>
           <table className="tbl">
-            <thead><tr>
-              <th>Branch</th><th>Category</th><th>Intake</th>
-              <th>Last Cutoff</th><th>Predicted</th>
-              <th>Target Range</th><th>Already Interested</th><th>Rationale</th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <th>Branch</th>
+                <th>Category</th>
+                <th>Intake</th>
+                <th>Last Cutoff</th>
+                <th>Predicted</th>
+                <th>Target Range</th>
+                <th>Trend</th>
+                <th>Already Interested</th>
+              </tr>
+            </thead>
             <tbody>
-              {filtered.length === 0
-                ? <tr><td colSpan={8} style={{ textAlign:"center", padding:"2rem", color:"var(--gray-400)" }}>No data for this filter</td></tr>
-                : filtered.map((b, i) => (
+              {!data && <tr><td colSpan={8}><Spinner /></td></tr>}
+              {data && filtered.length === 0 && (
+                <tr><td colSpan={8}><div className="empty-state">No data for this filter</div></td></tr>
+              )}
+              {filtered.map((b, i) => {
+                const trend = (b.predictedCutoff || 0) > (b.lastRoundCutoff || 0) + .5 ? "RISING"
+                  : (b.predictedCutoff || 0) < (b.lastRoundCutoff || 0) - .5 ? "FALLING" : "STABLE";
+                return (
                   <tr key={i}>
                     <td>
-                      <div style={{ fontWeight:600, color:"var(--navy)", fontSize:"0.82rem" }}>{b.courseName}</div>
-                      <div style={{ fontFamily:"'DM Mono'", fontSize:"0.7rem", color:"var(--gray-400)" }}>{b.courseCode}</div>
+                      <div className="branch-name">{b.courseName}</div>
+                      <div className="branch-code">{b.courseCode}</div>
                     </td>
-                    <td><span className="badge badge-blue">{b.category}</span>
-                        <div style={{ fontSize:"0.68rem", color:"var(--gray-400)", marginTop:"2px" }}>{b.gender}</div></td>
+                    <td>
+                      <Badge type="primary">{b.category}</Badge>
+                      <div className="text-muted mt-1" style={{ fontSize: ".7rem" }}>{b.gender}</div>
+                    </td>
                     <td className="mono">{b.intake}</td>
-                    <td className="mono" style={{ color:"var(--gray-600)" }}>{b.lastRoundCutoff?.toFixed(1)}</td>
+                    <td className="mono text-muted">{b.lastRoundCutoff?.toFixed(2) || "—"}</td>
                     <td>
-                      <div className="mono" style={{ fontWeight:700 }}>{b.predictedCutoff?.toFixed(1)}</div>
-                      <div style={{ marginTop:"2px" }}><Badge text={b.predictedCutoff > (b.lastRoundCutoff + 0.5) ? "RISING" : b.predictedCutoff < (b.lastRoundCutoff - 0.5) ? "FALLING" : "STABLE"} /></div>
+                      <div className="predicted-val">{b.predictedCutoff?.toFixed(2) || "—"}</div>
+                      {b.predictionConfidence && (
+                        <div className="mt-1">
+                          <Badge type={b.predictionConfidence === "HIGH" ? "success" : b.predictionConfidence === "MEDIUM" ? "warning" : "muted"}>
+                            {b.predictionConfidence}
+                          </Badge>
+                        </div>
+                      )}
                     </td>
-                    <td>
-                      <div style={{ background:"var(--navy)", color:"var(--gold)", fontFamily:"'DM Mono'", fontSize:"0.8rem", fontWeight:700, padding:"3px 8px", borderRadius:"6px", display:"inline-block" }}>
-                        {b.targetMin} – {b.targetMax}
-                      </div>
-                    </td>
+                    <td><span className="range-chip">{b.targetMin} – {b.targetMax}</span></td>
+                    <td><TrendBadge value={trend} /></td>
                     <td className="mono">{b.alreadyShortlisted || 0}</td>
-                    <td style={{ fontSize:"0.72rem", color:"var(--gray-600)", maxWidth:"200px" }}>{b.rationale}</td>
                   </tr>
-                ))
-              }
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -556,48 +805,63 @@ function TargetRangesPage({ collegeCode, round }) {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// PAGE 4: CUTOFF HISTORY
-// ═════════════════════════════════════════════════════════════════════════════
-function CutoffHistoryPage({ collegeCode }) {
-  const { data, loading, error } = useFetch(
-    collegeCode ? `${API_BASE}/${collegeCode}/cutoff-history` : null
-  );
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGE: CUTOFF HISTORY
+// ══════════════════════════════════════════════════════════════════════════════
+function CutoffHistoryPage({ code, token }) {
+  const { data, loading, error, refresh } = useFetch(code ? `${API_BASE}/${code}/cutoff-history` : null, token);
   const [activeBranch, setActiveBranch] = useState(null);
-  const [catFilter, setCatFilter] = useState("ALL");
+  const [catFilter,    setCatFilter]    = useState("ALL");
 
-  if (!collegeCode) return <div className="empty">Enter a college code above and click Load.</div>;
   if (loading) return <Spinner />;
-  if (error)   return <div className="error-msg">⚠ {error}</div>;
+  if (error)   return <><Alert type="error">{error}</Alert><div style={{marginTop:"1rem"}}><RefreshBtn onClick={refresh} loading={loading} /></div></>;
   if (!data)   return null;
 
-  const branches = data.branches || [];
-  const displayBranch = activeBranch || branches[0];
-  const allCats = ["ALL", ...new Set((displayBranch?.byCategory || []).map(c => c.capCategoryCode))];
-  const filteredCats = catFilter === "ALL"
+  const branches      = data.branches || [];
+  const displayBranch = activeBranch  || branches[0];
+  const allCats       = ["ALL", ...new Set((displayBranch?.byCategory || []).map(c => c.capCategoryCode))];
+  const filteredCats  = catFilter === "ALL"
     ? (displayBranch?.byCategory || [])
     : (displayBranch?.byCategory || []).filter(c => c.capCategoryCode === catFilter);
-
-  // Get all rounds in the data for table header
-  const allRounds = displayBranch?.byCategory
+  const allRounds     = displayBranch?.byCategory
     ? [...new Set(displayBranch.byCategory.flatMap(c => (c.roundHistory || []).map(r => r.round)))].sort()
     : [];
 
   return (
     <>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:".75rem"}}>
+        <RefreshBtn onClick={refresh} loading={loading} />
+      </div>
+      <div className="kpi-grid">
+        <div className="kpi">
+          <div className="kpi-label">College</div>
+          <div className="kpi-value" style={{ fontSize: "1.1rem" }}>{data.collegeName}</div>
+          <div className="kpi-sub">{branches.length} branches tracked</div>
+        </div>
+        <div className="kpi accent">
+          <div className="kpi-label">Branches</div>
+          <div className="kpi-value">{branches.length}</div>
+          <div className="kpi-sub">With cutoff history</div>
+        </div>
+        <div className="kpi success">
+          <div className="kpi-label">Total Seats</div>
+          <div className="kpi-value">{branches.reduce((s, b) => s + (b.intake || 0), 0)}</div>
+          <div className="kpi-sub">Across all branches</div>
+        </div>
+      </div>
+
       <div className="card">
         <div className="card-header">
-          <div className="card-title">{data.collegeName}</div>
-          <span className="badge badge-blue">{branches.length} branches</span>
+          <div className="card-title">Select Branch</div>
+          <Badge type="primary">{branches.length} branches</Badge>
         </div>
         <div className="card-body">
-          <div className="section-label">Select Branch</div>
           <div className="pill-tabs">
             {branches.map(b => (
               <div key={b.courseCode}
                    className={`pill-tab ${(activeBranch?.courseCode || branches[0]?.courseCode) === b.courseCode ? "active" : ""}`}
                    onClick={() => { setActiveBranch(b); setCatFilter("ALL"); }}>
-                {b.courseName?.split(" ").slice(0, 2).join(" ") || b.courseCode}
+                {(b.courseName || b.courseCode)?.split(" ").slice(0, 2).join(" ")}
               </div>
             ))}
           </div>
@@ -609,8 +873,8 @@ function CutoffHistoryPage({ collegeCode }) {
           <div className="card-header">
             <div>
               <div className="card-title">{displayBranch.courseName}</div>
-              <div style={{ fontSize:"0.78rem", color:"var(--gray-400)", marginTop:"2px" }}>
-                Intake: {displayBranch.intake} seats · Code: {displayBranch.courseCode}
+              <div className="text-muted" style={{ fontSize: ".78rem", marginTop: 2 }}>
+                {displayBranch.intake} seats · Code: {displayBranch.courseCode}
               </div>
             </div>
           </div>
@@ -621,46 +885,48 @@ function CutoffHistoryPage({ collegeCode }) {
                      onClick={() => setCatFilter(c)}>{c}</div>
               ))}
             </div>
-
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  <th>Gender</th>
-                  {allRounds.map(r => <th key={r}>Round {r} Cutoff</th>)}
-                  <th>Predicted Next</th>
-                  <th>Trend</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCats.length === 0
-                  ? <tr><td colSpan={allRounds.length + 4} style={{ textAlign:"center", padding:"2rem", color:"var(--gray-400)" }}>No data</td></tr>
-                  : filteredCats.map((cat, i) => {
-                    const roundMap = {};
-                    (cat.roundHistory || []).forEach(r => { roundMap[r.round] = r.cutoffPercentile; });
+            <div style={{ overflowX: "auto" }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>CAP Category</th>
+                    <th>Gender</th>
+                    {allRounds.map(r => <th key={r}>Round {r}</th>)}
+                    <th>Predicted</th>
+                    <th>Trend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredCats.length === 0 && (
+                    <tr><td colSpan={allRounds.length + 4}>
+                      <div className="empty-state">No data for this category</div>
+                    </td></tr>
+                  )}
+                  {filteredCats.map((cat, i) => {
+                    const rm = {};
+                    (cat.roundHistory || []).forEach(r => { rm[r.round] = r.cutoffPercentile; });
                     return (
                       <tr key={i}>
-                        <td>
-                          <span className="badge badge-blue">{cat.capCategoryCode}</span>
-                        </td>
-                        <td style={{ fontSize:"0.8rem", color:"var(--gray-600)" }}>{cat.gender || "—"}</td>
+                        <td><Badge type="primary">{cat.capCategoryCode}</Badge></td>
+                        <td className="text-muted" style={{ fontSize: ".82rem" }}>{cat.gender || "—"}</td>
                         {allRounds.map(r => (
                           <td key={r} className="mono">
-                            {roundMap[r] != null ? roundMap[r].toFixed(1) : <span style={{color:"var(--gray-300)"}}>—</span>}
+                            {rm[r] != null ? <span className="fw-700">{rm[r].toFixed(2)}</span>
+                                           : <span className="text-muted">—</span>}
                           </td>
                         ))}
                         <td>
                           {cat.predictedNextCutoff != null
-                            ? <span style={{ fontFamily:"'DM Mono'", fontWeight:700, color:"var(--saffron)" }}>{cat.predictedNextCutoff.toFixed(1)}</span>
+                            ? <span className="predicted-val">{cat.predictedNextCutoff.toFixed(2)}</span>
                             : "—"}
                         </td>
-                        <td>{cat.trend ? <Badge text={cat.trend} /> : "—"}</td>
+                        <td><TrendBadge value={cat.trend} /></td>
                       </tr>
                     );
-                  })
-                }
-              </tbody>
-            </table>
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -668,90 +934,215 @@ function CutoffHistoryPage({ collegeCode }) {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// MAIN APP
-// ═════════════════════════════════════════════════════════════════════════════
-export default function App() {
-  const [page, setPage]           = useState("interested");
-  const [inputCode, setInputCode] = useState("");
-  const [collegeCode, setCollegeCode] = useState("");
-  const [round, setRound]         = useState(4);
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGE: PROFILE
+// ══════════════════════════════════════════════════════════════════════════════
+function ProfilePage({ profile, token, onUpdate, onLogout }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    contactPersonName: profile?.contactPersonName || "",
+    contactPhone:      profile?.contactPhone      || "",
+    currentPassword:   "",
+    newPassword:       "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+  const [success, setSuccess] = useState("");
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const nav = [
-    { id: "interested",    label: "Interested Students",  icon: "👥" },
-    { id: "target-pool",   label: "Students to Target",   icon: "🎯" },
-    { id: "target-ranges", label: "Cutoff Target Ranges", icon: "📊" },
-    { id: "cutoff-history",label: "Cutoff History & ML",  icon: "📈" },
-  ];
+  const save = async () => {
+    setError(""); setSuccess("");
+    setLoading(true);
+    try {
+      const updated = await apiPut(`${AUTH_BASE}/me`, {
+        contactPersonName: form.contactPersonName || undefined,
+        contactPhone:      form.contactPhone      || undefined,
+        currentPassword:   form.currentPassword   || undefined,
+        newPassword:       form.newPassword       || undefined,
+      }, token);
+      onUpdate(updated);
+      setSuccess("Profile updated successfully!");
+      setEditing(false);
+      setForm(f => ({ ...f, currentPassword: "", newPassword: "" }));
+    } catch (e) { setError(e.message); }
+    finally     { setLoading(false); }
+  };
 
-  const currentNav = nav.find(n => n.id === page);
+  const p = profile || {};
 
   return (
     <>
-      <style>{STYLES}</style>
-      <div className="app">
-        <header className="header">
-          <div>
-            <div className="header-logo">E-Counsellor</div>
-            <div className="header-sub">College Counselling Dashboard</div>
+      <div className="page-header">
+        <div className="page-title">College Profile</div>
+        <div className="page-sub">Your college account and DTE registration details</div>
+      </div>
+
+      <div className="profile-hero">
+        <div className="profile-avatar">
+          {(p.collegeName || p.collegeCode || "C")[0].toUpperCase()}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="profile-college-name">{p.collegeName || p.collegeCode}</div>
+          <div className="profile-meta">
+            {p.district    && <div className="profile-meta-item">📍 {p.district}</div>}
+            {p.university  && <div className="profile-meta-item">🏛 {p.university}</div>}
+            {p.fundingType && <div className="profile-meta-item">💼 {p.fundingType}</div>}
           </div>
-          {collegeCode && <div className="header-code">{collegeCode}</div>}
-        </header>
+        </div>
+        <div className="profile-actions">
+          <button className="btn btn-danger btn-sm" onClick={onLogout}>🚪 Logout</button>
+        </div>
+      </div>
 
-        <div className="main-layout">
-          <nav className="sidebar">
-            <div className="sidebar-section">Counselling</div>
-            {nav.map(n => (
-              <div key={n.id}
-                   className={`nav-item ${page === n.id ? "active" : ""}`}
-                   onClick={() => setPage(n.id)}>
-                <span className="nav-icon">{n.icon}</span>
-                {n.label}
-              </div>
-            ))}
-          </nav>
+      {success && <Alert type="success">{success}</Alert>}
+      {error   && <Alert type="error">{error}</Alert>}
 
-          <main className="content">
-            {/* College picker bar */}
-            <div className="college-bar">
-              <label>College Code</label>
-              <input
-                placeholder="Enter DTE college code (e.g. 06155)"
-                value={inputCode}
-                onChange={e => setInputCode(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && setCollegeCode(inputCode.trim())}
-              />
-              {(page === "target-ranges") && (
-                <>
-                  <label>Round</label>
-                  <select value={round} onChange={e => setRound(Number(e.target.value))}>
-                    {[1,2,3,4].map(r => <option key={r} value={r}>Round {r}</option>)}
-                  </select>
-                </>
-              )}
-              <button className="btn-load" onClick={() => setCollegeCode(inputCode.trim())} disabled={!inputCode.trim()}>
-                Load
+      <div className="two-col">
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">🏫 College Information</div>
+            <span className="mono text-primary" style={{ fontSize: ".78rem", fontWeight: 700 }}>{p.collegeCode}</span>
+          </div>
+          <div className="card-body">
+            <div className="info-grid">
+              {[
+                ["College Name",  p.collegeName    || "—"],
+                ["College Code",  p.collegeCode    || "—"],
+                ["University",    p.university     || "—"],
+                ["Funding Type",  p.fundingType    || "—"],
+                ["District",      p.district       || "—"],
+                ["Region",        p.region         || "—"],
+                ["Total Intake",  p.totalIntake ? `${p.totalIntake} seats` : "—"],
+                ["Minority",      p.minorityStatus || "Non-Minority"],
+              ].map(([label, value]) => (
+                <div className="info-row" key={label}>
+                  <div className="info-label">{label}</div>
+                  <div className="info-value">{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">👤 Account Details</div>
+            {!editing && (
+              <button className="btn btn-outline btn-sm"
+                      onClick={() => { setEditing(true); setSuccess(""); setError(""); }}>
+                ✏ Edit
               </button>
-            </div>
-
-            {/* Page heading */}
-            <div className="page-title">{currentNav?.label}</div>
-            <div className="page-subtitle">
-              {{
-                "interested":     "See which students viewed and shortlisted your college and branches.",
-                "target-pool":    "Find how many eligible students haven't discovered you yet.",
-                "target-ranges":  "See what percentile range to target for outreach, per branch.",
-                "cutoff-history": "Historical cutoffs per branch and category, with ML prediction.",
-              }[page]}
-            </div>
-
-            {page === "interested"     && <InterestedPage     collegeCode={collegeCode} />}
-            {page === "target-pool"    && <TargetPoolPage     collegeCode={collegeCode} />}
-            {page === "target-ranges"  && <TargetRangesPage   collegeCode={collegeCode} round={round} />}
-            {page === "cutoff-history" && <CutoffHistoryPage  collegeCode={collegeCode} />}
-          </main>
+            )}
+          </div>
+          <div className="card-body">
+            {!editing ? (
+              <div className="info-grid">
+                {[
+                  ["Login Email",    p.email              || "—"],
+                  ["Contact Person", p.contactPersonName  || "—"],
+                  ["Contact Phone",  p.contactPhone       || "—"],
+                  ["Status",         p.approved ? "✅ Approved" : "⏳ Pending Approval"],
+                ].map(([label, value]) => (
+                  <div className="info-row" key={label}>
+                    <div className="info-label">{label}</div>
+                    <div className="info-value">{value}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="form-group">
+                  <label className="form-label">Contact Person Name</label>
+                  <input className="form-input" value={form.contactPersonName}
+                         onChange={e => set("contactPersonName", e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Contact Phone</label>
+                  <input className="form-input mono" type="tel" value={form.contactPhone}
+                         onChange={e => set("contactPhone", e.target.value)} />
+                </div>
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1rem", marginTop: ".5rem" }}>
+                  <div style={{ fontSize: ".7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--text-muted)", marginBottom: ".75rem" }}>
+                    Change Password (optional)
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Current Password</label>
+                    <input className="form-input" type="password" value={form.currentPassword}
+                           onChange={e => set("currentPassword", e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">New Password</label>
+                    <input className="form-input" type="password" value={form.newPassword}
+                           onChange={e => set("newPassword", e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={save} disabled={loading}>
+                    {loading ? "Saving…" : "Save Changes"}
+                  </button>
+                  <button className="btn btn-outline" onClick={() => { setEditing(false); setError(""); }}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ROOT APP
+// ══════════════════════════════════════════════════════════════════════════════
+const PAGE_SUBTITLES = {
+  "interested":     "See which students from the app viewed and shortlisted your college.",
+  "target-pool":    "Find how many eligible students haven't discovered your college yet.",
+  "target-ranges":  "Data-driven percentile ranges to target per branch and category.",
+  "cutoff-history": "Historical cutoffs per branch and category, with ML trend predictions.",
+};
+
+export default function App() {
+  const { token, profile, saveSession, logout, updateProfile } = useAuth();
+  const [page,     setPage]     = useState("interested");
+  const [authView, setAuthView] = useState("login");
+
+  if (!token || !profile) {
+    return authView === "register"
+      ? <RegisterPage onLogin={saveSession} onGoLogin={() => setAuthView("login")} />
+      : <LoginPage    onLogin={saveSession} onGoRegister={() => setAuthView("register")} />;
+  }
+
+  const currentNav = NAV.find(n => n.id === page);
+  const code       = profile.collegeCode;
+
+  return (
+    <div className="app-shell">
+      <Topbar profile={profile} onNav={setPage} onLogout={logout} />
+      <div className="body-layout">
+        <Sidebar active={page} onNav={setPage} />
+        <main className="main">
+          {page !== "profile" && (
+            <div className="page-header">
+              <div className="page-title">{currentNav?.label}</div>
+              <div className="page-sub">{PAGE_SUBTITLES[page]}</div>
+            </div>
+          )}
+          {page === "interested"     && <InterestedPage    code={code} token={token} />}
+          {page === "target-pool"    && <TargetPoolPage    code={code} token={token} />}
+          {page === "target-ranges"  && <TargetRangesPage  code={code} token={token} />}
+          {page === "cutoff-history" && <CutoffHistoryPage code={code} token={token} />}
+          {page === "profile"        && (
+            <ProfilePage
+              profile={profile}
+              token={token}
+              onUpdate={updateProfile}
+              onLogout={logout}
+            />
+          )}
+        </main>
+      </div>
+    </div>
   );
 }

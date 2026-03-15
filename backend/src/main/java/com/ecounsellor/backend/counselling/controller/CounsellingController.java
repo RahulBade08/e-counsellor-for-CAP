@@ -2,21 +2,30 @@ package com.ecounsellor.backend.counselling.controller;
 
 import com.ecounsellor.backend.counselling.dto.CounsellingDTOs.*;
 import com.ecounsellor.backend.counselling.service.CounsellingService;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * College Counselling API
+ * College Counselling API — UPDATED with college ownership enforcement.
  *
  * PUBLIC (no auth — Android app fires these silently):
  *   POST /api/counselling/event/view          — record a student view
  *   POST /api/counselling/event/shortlist      — record a student shortlist
  *
- * COLLEGE DASHBOARD (will add JWT auth later):
+ * COLLEGE DASHBOARD (requires JWT with role=COLLEGE):
  *   GET  /api/counselling/{collegeCode}/interested      — Feature 1
  *   GET  /api/counselling/{collegeCode}/target-pool     — Feature 2
  *   GET  /api/counselling/{collegeCode}/target-ranges   — Feature 3
  *   GET  /api/counselling/{collegeCode}/cutoff-history  — Feature 4
+ *
+ * OWNERSHIP RULE:
+ *   A college's JWT subject = their collegeCode.
+ *   The controller verifies that the path {collegeCode} matches the JWT subject.
+ *   This prevents College A from reading College B's data.
+ *
+ * REPLACE your existing CounsellingController.java with this file.
  */
 @RestController
 @RequestMapping("/api/counselling")
@@ -39,29 +48,12 @@ public class CounsellingController {
     // EVENT TRACKING — Android app calls these silently (no auth needed)
     // ══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Called when student opens CollegeDetailFragment.
-     * Fire-and-forget — always return 200 even if it fails.
-     *
-     * POST /api/counselling/event/view
-     * Body: { "collegeCode":"06155", "courseCode":"101",
-     *          "studentPercentile":82.4, "category":"OPEN",
-     *          "gender":"GENERAL", "admissionType":"STATE" }
-     */
     @PostMapping("/event/view")
     public ResponseEntity<Void> recordView(@RequestBody ViewEventRequest req) {
         try { service.recordView(req); } catch (Exception ignored) {}
         return ResponseEntity.ok().build();
     }
 
-    /**
-     * Called when student taps shortlist/save button on a college result card.
-     *
-     * POST /api/counselling/event/shortlist
-     * Body: { "collegeCode":"06155", "courseCode":"101", "courseName":"Computer Engineering",
-     *          "studentPercentile":82.4, "category":"OPEN", "gender":"GENERAL",
-     *          "admissionType":"STATE", "capCategoryCode":"GOPENH" }
-     */
     @PostMapping("/event/shortlist")
     public ResponseEntity<Void> recordShortlist(@RequestBody ShortlistRequest req) {
         try { service.recordShortlist(req); } catch (Exception ignored) {}
@@ -69,89 +61,81 @@ public class CounsellingController {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // FEATURE 1 — INTERESTED STUDENTS
+    // HELPER: Ownership check
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * GET /api/counselling/{collegeCode}/interested
-     *
-     * Returns:
-     * - Total views and shortlists for this college
-     * - Per-branch shortlist count + category breakdown
-     * - Percentile band distribution of interested students
-     * - Category breakdown overall
-     *
-     * Example: GET /api/counselling/06155/interested
+     * Ensures the college in the path is the same as the logged-in college.
+     * Returns an error response if the check fails, null if OK.
      */
+    private ResponseEntity<?> checkOwnership(String pathCollegeCode, HttpServletRequest request) {
+        String jwtCollegeCode = (String) request.getAttribute("currentUser");
+        String role           = (String) request.getAttribute("currentRole");
+
+        // Admins can see any college's data
+        if ("ADMIN".equals(role)) return null;
+
+        if (jwtCollegeCode == null || !jwtCollegeCode.equals(pathCollegeCode)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("{\"error\":\"You can only view your own college data.\"}");
+        }
+        return null;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // FEATURE 1 — INTERESTED STUDENTS
+    // ══════════════════════════════════════════════════════════════════════════
+
     @GetMapping("/{collegeCode}/interested")
-    public ResponseEntity<InterestedStudentsResponse> getInterestedStudents(
-            @PathVariable String collegeCode) {
+    public ResponseEntity<?> getInterestedStudents(
+            @PathVariable String collegeCode,
+            HttpServletRequest request) {
+        ResponseEntity<?> ownershipError = checkOwnership(collegeCode, request);
+        if (ownershipError != null) return ownershipError;
         return ResponseEntity.ok(service.getInterestedStudents(collegeCode));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // FEATURE 2 — TARGET POOL (students to target, for a specific branch)
+    // FEATURE 2 — TARGET POOL
     // ══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * GET /api/counselling/{collegeCode}/target-pool
-     *     ?courseCode=101&capCategoryCode=GOPENH&round=2
-     *
-     * Returns how many app-users match the eligible percentile range
-     * for this branch+category, and how many already shortlisted this college.
-     *
-     * Example: GET /api/counselling/06155/target-pool?courseCode=101&capCategoryCode=GOPENH&round=2
-     */
     @GetMapping("/{collegeCode}/target-pool")
-    public ResponseEntity<TargetPoolResponse> getTargetPool(
+    public ResponseEntity<?> getTargetPool(
             @PathVariable String collegeCode,
             @RequestParam String  courseCode,
             @RequestParam String  capCategoryCode,
-            @RequestParam(defaultValue = "4") int round) {
+            @RequestParam(defaultValue = "4") int round,
+            HttpServletRequest request) {
+        ResponseEntity<?> ownershipError = checkOwnership(collegeCode, request);
+        if (ownershipError != null) return ownershipError;
         return ResponseEntity.ok(
             service.getTargetPool(collegeCode, courseCode, capCategoryCode, round));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // FEATURE 3 — TARGET RANGES (cutoff range to target students, all branches)
+    // FEATURE 3 — TARGET RANGES
     // ══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * GET /api/counselling/{collegeCode}/target-ranges?round=4
-     *
-     * Returns for each branch+category:
-     * - Last actual cutoff
-     * - ML predicted cutoff for this year
-     * - Recommended target percentile range (min/max)
-     * - Human-readable rationale
-     * - Demand signal (students already interested)
-     *
-     * Example: GET /api/counselling/06155/target-ranges?round=4
-     */
     @GetMapping("/{collegeCode}/target-ranges")
-    public ResponseEntity<TargetRangesResponse> getTargetRanges(
+    public ResponseEntity<?> getTargetRanges(
             @PathVariable String collegeCode,
-            @RequestParam(defaultValue = "4") int round) {
+            @RequestParam(defaultValue = "4") int round,
+            HttpServletRequest request) {
+        ResponseEntity<?> ownershipError = checkOwnership(collegeCode, request);
+        if (ownershipError != null) return ownershipError;
         return ResponseEntity.ok(service.getTargetRanges(collegeCode, round));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // FEATURE 4 — CUTOFF HISTORY + ML PREDICTION (branch-wise)
+    // FEATURE 4 — CUTOFF HISTORY + ML PREDICTION
     // ══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * GET /api/counselling/{collegeCode}/cutoff-history
-     *
-     * Returns for each branch → each category → each round:
-     * - Historical cutoffs (all rounds in DB)
-     * - ML-predicted next cutoff
-     * - Trend: RISING / FALLING / STABLE
-     *
-     * Example: GET /api/counselling/06155/cutoff-history
-     */
     @GetMapping("/{collegeCode}/cutoff-history")
-    public ResponseEntity<CutoffHistoryResponse> getCutoffHistory(
-            @PathVariable String collegeCode) {
+    public ResponseEntity<?> getCutoffHistory(
+            @PathVariable String collegeCode,
+            HttpServletRequest request) {
+        ResponseEntity<?> ownershipError = checkOwnership(collegeCode, request);
+        if (ownershipError != null) return ownershipError;
         return ResponseEntity.ok(service.getCutoffHistory(collegeCode));
     }
 }

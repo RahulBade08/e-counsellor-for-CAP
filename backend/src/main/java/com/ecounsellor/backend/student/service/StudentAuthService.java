@@ -1,6 +1,8 @@
 package com.ecounsellor.backend.student.service;
 
 import com.ecounsellor.backend.admin.util.JwtUtil;
+import com.ecounsellor.backend.counselling.entity.StudentShortlist;
+import com.ecounsellor.backend.counselling.repository.StudentShortlistRepository;
 import com.ecounsellor.backend.student.dto.StudentAuthDTOs.*;
 import com.ecounsellor.backend.student.entity.Student;
 import com.ecounsellor.backend.student.repository.StudentRepository;
@@ -16,17 +18,20 @@ import java.util.List;
 @Service
 public class StudentAuthService {
 
-    private final StudentRepository repo;
-    private final PasswordEncoder   encoder;
-    private final JwtUtil           jwtUtil;
-    private final ObjectMapper      objectMapper = new ObjectMapper();
+    private final StudentRepository          repo;
+    private final PasswordEncoder            encoder;
+    private final JwtUtil                    jwtUtil;
+    private final StudentShortlistRepository shortlistRepo;
+    private final ObjectMapper               objectMapper = new ObjectMapper();
 
-    public StudentAuthService(StudentRepository repo,
-                              PasswordEncoder encoder,
-                              JwtUtil jwtUtil) {
-        this.repo    = repo;
-        this.encoder = encoder;
-        this.jwtUtil = jwtUtil;
+    public StudentAuthService(StudentRepository          repo,
+                              PasswordEncoder            encoder,
+                              JwtUtil                    jwtUtil,
+                              StudentShortlistRepository shortlistRepo) {
+        this.repo          = repo;
+        this.encoder       = encoder;
+        this.jwtUtil       = jwtUtil;
+        this.shortlistRepo = shortlistRepo;
     }
 
     // ── REGISTER ──────────────────────────────────────────────────────────────
@@ -106,43 +111,70 @@ public class StudentAuthService {
     }
 
     // ── ADD SHORTLIST ─────────────────────────────────────────────────────────
-    // Adds one college to the student's shortlist. Ignores duplicates.
+    // Writes to both:
+    //   1. students.shortlisted_colleges (JSON) — Android app persistent list
+    //   2. student_shortlists table           — college counselling dashboard
     public StudentProfile addShortlist(String phone, ShortlistItem item) {
         Student s = repo.findByPhone(phone)
             .orElseThrow(() -> new RuntimeException("Student not found"));
 
         List<ShortlistItem> list = parseShortlist(s.getShortlistedColleges());
 
-        // Deduplicate: skip if already shortlisted
         boolean exists = list.stream().anyMatch(i ->
                 i.collegeCode.equals(item.collegeCode) &&
                 i.courseName.equals(item.courseName));
+
         if (!exists) {
             list.add(item);
             s.setShortlistedColleges(toJson(list));
             repo.save(s);
+
+            StudentShortlist sl = new StudentShortlist();
+            sl.setCollegeCode(item.collegeCode);
+            sl.setCourseCode(item.courseName != null ? item.courseName : "");
+            sl.setCourseName(item.courseName);
+            sl.setStudentPercentile(s.getCetPercentile());
+            sl.setCategory(s.getCategory());
+            sl.setGender(s.getGender());
+            sl.setAdmissionType(s.getAdmissionType());
+            sl.setCapCategoryCode(deriveCapCategoryCode(s.getCategory(), s.getAdmissionType(), s.getGender()));
+            shortlistRepo.save(sl);
         }
 
         return new StudentProfile(s);
     }
 
     // ── REMOVE SHORTLIST ──────────────────────────────────────────────────────
+    // Removes from both:
+    //   1. students.shortlisted_colleges (JSON) — Android app persistent list
+    //   2. student_shortlists table           — college counselling dashboard
+    //
+    // BUG FIX: previously only removed from the JSON column.
+    // The dashboard table was never updated, so shortlist counts could only
+    // go up — they never decreased even after student removed the college.
     public StudentProfile removeShortlist(String phone, RemoveShortlistRequest req) {
         Student s = repo.findByPhone(phone)
             .orElseThrow(() -> new RuntimeException("Student not found"));
 
+        // 1. Remove from JSON column on student record
         List<ShortlistItem> list = parseShortlist(s.getShortlistedColleges());
         list.removeIf(i ->
                 i.collegeCode.equals(req.collegeCode) &&
                 i.courseName.equals(req.courseName));
-
         s.setShortlistedColleges(toJson(list));
         repo.save(s);
+
+        // 2. Remove from dashboard table — this was the missing step
+        shortlistRepo.deleteByCollegeAndCourseAndCategory(
+                req.collegeCode,
+                req.courseName != null ? req.courseName : "",
+                s.getCategory());
 
         return new StudentProfile(s);
     }
 
     // ── HELPERS ───────────────────────────────────────────────────────────────
+
     private List<ShortlistItem> parseShortlist(String json) {
         if (json == null || json.isBlank()) return new ArrayList<>();
         try {
@@ -166,5 +198,27 @@ public class StudentAuthService {
         else if (p.startsWith("91") && p.length() == 12) p = p.substring(2);
         if (p.length() != 10) throw new RuntimeException("Enter a valid 10-digit phone number");
         return p;
+    }
+
+    private String deriveCapCategoryCode(String category, String admissionType, String gender) {
+        if (category == null) return "GOPENH";
+        if ("EWS".equals(category))  return "EWS";
+        if ("TFWS".equals(category)) return "TFWS";
+
+        boolean isLadies = "LADIES".equalsIgnoreCase(gender);
+        boolean isHome   = "HOME".equalsIgnoreCase(admissionType);
+        String prefix = (isLadies || isHome) ? "L" : "G";
+
+        return switch (category.toUpperCase()) {
+            case "OPEN" -> prefix + "OPEN" + (isLadies ? "S" : "H");
+            case "OBC"  -> prefix + "OBC"  + "S";
+            case "SC"   -> prefix + "SC"   + "S";
+            case "ST"   -> prefix + "ST"   + "S";
+            case "NT1"  -> prefix + "NT1"  + "S";
+            case "NT2"  -> prefix + "NT2"  + "S";
+            case "NT3"  -> prefix + "NT3"  + "S";
+            case "VJ"   -> prefix + "VJ"   + "S";
+            default     -> "GOPENH";
+        };
     }
 }

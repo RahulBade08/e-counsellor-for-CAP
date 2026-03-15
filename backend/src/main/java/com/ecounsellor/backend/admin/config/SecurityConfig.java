@@ -9,14 +9,22 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 /**
- * UPDATED SecurityConfig — adds student auth endpoints to permitted list.
- * REPLACE your existing SecurityConfig.java with this file.
+ * REPLACE the existing SecurityConfig.java with this file.
+ *
+ * Key change: admin login is now at /api/admin/auth/login (was /auth/login).
+ * The old /auth/login is kept as a permitted path for backward compatibility
+ * during the transition period — you can remove it once all clients are updated.
  */
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity   // enables @PreAuthorize on controllers
+@EnableMethodSecurity
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
@@ -28,31 +36,79 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth
-                // ── Public endpoints (no token needed) ────────────────────
-                .requestMatchers("/auth/**").permitAll()                     // admin login
-                .requestMatchers("/api/student/auth/**").permitAll()         // student register + login
-                .requestMatchers("/api/student/predict").permitAll()         // college search (public)
-                .requestMatchers("/api/college/**").permitAll()              // college info (public)
-                .requestMatchers("/api/counselling/event/**").permitAll()    // view/shortlist events
+
+                // ── PUBLIC — no token needed ───────────────────────────────────
+                // Legacy admin login path (keep for backward compat)
+                .requestMatchers("/auth/**").permitAll()
+
+                // New admin login path
+                .requestMatchers("/api/admin/auth/login").permitAll()
+
+                // Student auth
+                .requestMatchers("/api/student/auth/**").permitAll()
+                .requestMatchers("/api/student/predict").permitAll()
+
+                // College register & login — public
+                .requestMatchers("/api/college/auth/register").permitAll()
+                .requestMatchers("/api/college/auth/login").permitAll()
+
+                // Android app event tracking — no auth needed
+                .requestMatchers("/api/counselling/event/**").permitAll()
                 .requestMatchers("/api/counselling/test").permitAll()
 
-                // ── Admin-only endpoints ───────────────────────────────────
+                // ── ADMIN ONLY ─────────────────────────────────────────────────
+                // All /api/admin/** except the public login above
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
 
-                // ── Student-only endpoints ─────────────────────────────────
+                // ── STUDENT ONLY ───────────────────────────────────────────────
                 .requestMatchers("/api/student/me").hasRole("STUDENT")
                 .requestMatchers("/api/student/me/**").hasRole("STUDENT")
 
-                // ── College counselling dashboard (any authenticated) ──────
-                .requestMatchers("/api/counselling/**").authenticated()
+                // ── COLLEGE ONLY ───────────────────────────────────────────────
+                .requestMatchers("/api/college/auth/me").hasRole("COLLEGE")
+                .requestMatchers("/api/counselling/**").hasRole("COLLEGE")
 
-                // ── Everything else: permit ────────────────────────────────
+                // ── EVERYTHING ELSE ────────────────────────────────────────────
                 .anyRequest().permitAll()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+
+        config.setAllowedOriginPatterns(List.of(
+            "http://localhost:*",
+            "http://127.0.0.1:*"
+        ));
+
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+
+        config.setAllowedHeaders(List.of(
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "Origin",
+            "X-Requested-With"
+        ));
+
+        config.setExposedHeaders(List.of("Authorization"));
+        config.setAllowCredentials(true);
+        config.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
     }
 }
