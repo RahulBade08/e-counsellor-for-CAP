@@ -931,66 +931,81 @@ public List<Student> studentAccounts() { return studentRepo.findAll(); }`;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// DATA IMPORT PAGE (CET Scrape + Clean + Push)
+// DATA IMPORT PAGE  — replace the existing DataImportPage function in App.jsx
 // ══════════════════════════════════════════════════════════════════════════════
+//
+// Changes from original:
+//  1. gender field removed everywhere
+//  2. Negative cutoff_percentile → Math.abs()  (the key bug fix)
+//  3. category_reservation column handled (extractor.py output)
+//  4. regional_reservation, last_cap_round, course_status, course_university kept
+//  5. Scrape step shows downloaded file list with round info
+//  6. Preview table updated to match new columns
+//
 const IMPORT_STEPS = ["Configure", "Scrape / Upload", "Preview & Clean", "Push to DB"];
 
 function DataImportPage({ token }) {
-  const [step,    setStep]    = useState(0);
-  const [config,  setConfig]  = useState({ year:"2024", rounds:"1,2,3,4", mode:"upload" });
-  const [rawData, setRawData] = useState(null);
-  const [cleaned, setCleaned] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [log,     setLog]     = useState([]);
+  const [step,       setStep]       = useState(0);
+  const [config,     setConfig]     = useState({ year: "2024", rounds: "1,2,3,4", mode: "upload" });
+  const [rawData,    setRawData]    = useState(null);
+  const [cleaned,    setCleaned]    = useState(null);
+  const [loading,    setLoading]    = useState(false);
+  const [log,        setLog]        = useState([]);
   const [pushResult, setPushResult] = useState(null);
-  const [error,   setError]   = useState("");
+  const [error,      setError]      = useState("");
   const fileRef = useRef();
 
-  const addLog = (msg, type="info") => setLog(l => [...l, { msg, type, ts: new Date().toLocaleTimeString() }]);
+  const addLog = (msg, type = "info") =>
+    setLog(l => [...l, { msg, type, ts: new Date().toLocaleTimeString() }]);
 
-  // ── Step 0: Config ──────────────────────────────────────────────────────────
+  // ── Step 0: Configure ───────────────────────────────────────────────────────
   const StepConfig = () => (
     <div>
       <div className="form-group">
         <label className="form-label">Year</label>
-        <input className="form-input" style={{maxWidth:160}} placeholder="e.g. 2024"
-               value={config.year} onChange={e => setConfig(c => ({...c, year: e.target.value}))} />
+        <input className="form-input" style={{ maxWidth: 160 }} placeholder="e.g. 2024"
+          value={config.year} onChange={e => setConfig(c => ({ ...c, year: e.target.value }))} />
       </div>
       <div className="form-group">
-        <label className="form-label">Rounds to Import (comma-separated)</label>
-        <input className="form-input" style={{maxWidth:220}} placeholder="1,2,3,4"
-               value={config.rounds} onChange={e => setConfig(c => ({...c, rounds: e.target.value}))} />
+        <label className="form-label">Rounds (comma-separated)</label>
+        <input className="form-input" style={{ maxWidth: 220 }} placeholder="1,2,3,4"
+          value={config.rounds} onChange={e => setConfig(c => ({ ...c, rounds: e.target.value }))} />
       </div>
       <div className="form-group">
         <label className="form-label">Import Mode</label>
         <div className="flex gap-2">
-          {[["upload","📁 Upload CSV/Excel"],["scrape","🤖 Selenium Scrape (backend)"]].map(([v,l]) => (
-            <button key={v} className={`btn ${config.mode===v?"btn-primary":"btn-outline"}`}
-                    onClick={() => setConfig(c => ({...c, mode:v}))}>{l}</button>
+          {[["upload", "📁 Upload Clean CSV"], ["scrape", "🤖 Selenium Scrape (server)"]].map(([v, l]) => (
+            <button key={v} className={`btn ${config.mode === v ? "btn-primary" : "btn-outline"}`}
+              onClick={() => setConfig(c => ({ ...c, mode: v }))}>{l}</button>
           ))}
         </div>
       </div>
       {config.mode === "scrape" && (
         <Alert type="info">
-          The backend will use Selenium to navigate the MHT-CET CAP website, extract cutoff tables, and return raw JSON.
-          Make sure Selenium &amp; ChromeDriver are installed on the server.{" "}
-          <strong>Backend endpoint required:</strong> <code>POST /api/admin/import/scrape</code>
+          The server will run <code>cet_scraper.py</code> to download PDFs from CET Cell.
+          Then run the local pipeline to get the clean CSV, and upload it here.
+          <br /><strong>Requires:</strong> <code>cet_scraper.py</code> in <code>cet.pipeline.dir</code>
+          and ChromeDriver installed on the server.
         </Alert>
       )}
       {config.mode === "upload" && (
         <Alert type="info">
-          Upload a CSV or Excel file downloaded from the MHT-CET CAP portal. Columns expected:{" "}
-          <code>college_code, college_name, course_code, course_name, cap_category, gender, round, last_rank, cutoff_percentile</code>
+          Upload the <strong>CLEAN_*.csv</strong> produced by <code>pipeline.py</code>.
+          Expected columns: <code>college_code, college_name, course_code, course_name,
+          course_status, course_university, regional_reservation, last_cap_round,
+          cap_category, last_rank, cutoff_percentile</code>
         </Alert>
       )}
       <button className="btn btn-primary" onClick={() => setStep(1)}>
-        Next: {config.mode === "upload" ? "Upload File" : "Start Scrape"} →
+        Next: {config.mode === "upload" ? "Upload File" : "Trigger Scrape"} →
       </button>
     </div>
   );
 
   // ── Step 1: Scrape / Upload ─────────────────────────────────────────────────
   const StepScrape = () => {
+    const [scrapeFiles, setScrapeFiles] = useState(null);
+
     const handleFile = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -999,31 +1014,36 @@ function DataImportPage({ token }) {
       try {
         const text = await file.text();
         const lines = text.trim().split("\n");
-        const headers = lines[0].split(",").map(h => h.trim().replace(/"/g,""));
+        const headers = lines[0].split(",").map(h => h.trim().replace(/"/g, ""));
         const rows = lines.slice(1).map(line => {
-          const vals = line.split(",").map(v => v.trim().replace(/"/g,""));
-          return Object.fromEntries(headers.map((h,i) => [h, vals[i]]));
-        });
+          const vals = line.split(",").map(v => v.trim().replace(/"/g, ""));
+          return Object.fromEntries(headers.map((h, i) => [h, vals[i] ?? ""]));
+        }).filter(r => Object.values(r).some(v => v.trim() !== ""));
         addLog(`Parsed ${rows.length} rows, ${headers.length} columns`, "success");
-        setRawData({ rows, headers, source:"upload", year: config.year });
+        addLog(`Columns: ${headers.join(", ")}`);
+        setRawData({ rows, headers, source: "upload", year: config.year });
         setStep(2);
-      } catch(e) { setError("Failed to parse file: " + e.message); addLog("Parse error: " + e.message, "error"); }
-      finally { setLoading(false); }
+      } catch (e) {
+        setError("Failed to parse file: " + e.message);
+        addLog("Parse error: " + e.message, "error");
+      } finally { setLoading(false); }
     };
 
     const handleScrape = async () => {
-      setLoading(true); setError(""); setLog([]);
+      setLoading(true); setError(""); setLog([]); setScrapeFiles(null);
       addLog("Sending scrape request to backend…");
       try {
-        const data = await apiPost(`${API}/admin/import/scrape`, { year: config.year, rounds: config.rounds }, token);
-        addLog(`Scraped ${data.rows?.length} rows successfully`, "success");
-        setRawData(data);
-        setStep(2);
-      } catch(e) {
+        const data = await apiPost(`${API}/admin/import/scrape`,
+          { year: config.year, rounds: config.rounds }, token);
+        const files = data.files || [];
+        setScrapeFiles(files);
+        addLog(`Scrape complete. ${files.length} PDF(s) downloaded on server.`, "success");
+        (data.log || []).forEach(l => addLog(l.replace("[scraper] ", "")));
+        (data.errors || []).forEach(e => addLog(e, "error"));
+      } catch (e) {
         setError(e.message);
         addLog("Scrape failed: " + e.message, "error");
-      }
-      finally { setLoading(false); }
+      } finally { setLoading(false); }
     };
 
     return (
@@ -1031,70 +1051,69 @@ function DataImportPage({ token }) {
         {config.mode === "upload" ? (
           <>
             <div
-              style={{ border:"2px dashed var(--border2)", borderRadius:12, padding:"2.5rem", textAlign:"center", cursor:"pointer", transition:"border-color .2s" }}
+              style={{ border: "2px dashed var(--border2)", borderRadius: 12, padding: "2.5rem", textAlign: "center", cursor: "pointer" }}
               onClick={() => fileRef.current?.click()}
               onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if(f) { const dt = new DataTransfer(); dt.items.add(f); fileRef.current.files = dt.files; handleFile({target:{files:[f]}}); } }}>
-              <div style={{fontSize:"2.5rem", marginBottom:".75rem"}}>📁</div>
-              <div style={{fontWeight:700, marginBottom:".3rem"}}>Drop CSV / Excel file here</div>
-              <div style={{fontSize:".78rem", color:"var(--text-muted)"}}>or click to browse</div>
-              <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" style={{display:"none"}} onChange={handleFile} />
-            </div>
-            <div className="card" style={{marginTop:"1rem"}}>
-              <div className="card-header"><div className="card-title">📌 Selenium Scraper (Backend)</div></div>
-              <div className="code-block">{`# scraper/cet_scraper.py
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-import pandas as pd, time, json
-
-def scrape_cap_cutoffs(year, rounds):
-    driver = webdriver.Chrome()
-    results = []
-    for round_no in rounds:
-        url = f"https://cetcell.mahacet.org/cap-cutoff/?year={year}&round={round_no}"
-        driver.get(url)
-        time.sleep(3)  # wait for JS render
-        rows = driver.find_elements(By.CSS_SELECTOR, "table.cutoff-table tbody tr")
-        for row in rows:
-            cols = row.find_elements(By.TAG_NAME, "td")
-            if len(cols) >= 8:
-                results.append({
-                    "college_code": cols[0].text,
-                    "college_name": cols[1].text,
-                    "course_code":  cols[2].text,
-                    "course_name":  cols[3].text,
-                    "cap_category": cols[4].text,
-                    "gender":       cols[5].text,
-                    "round":        round_no,
-                    "last_rank":    cols[6].text,
-                    "cutoff_percentile": cols[7].text
-                })
-    driver.quit()
-    return results
-
-# Spring Boot calls this via ProcessBuilder or REST
-# Expose as: POST /api/admin/import/scrape`}</div>
+              onDrop={e => {
+                e.preventDefault();
+                const f = e.dataTransfer.files[0];
+                if (f) { const dt = new DataTransfer(); dt.items.add(f); fileRef.current.files = dt.files; handleFile({ target: { files: [f] } }); }
+              }}>
+              <div style={{ fontSize: "2.5rem", marginBottom: ".75rem" }}>📁</div>
+              <div style={{ fontWeight: 700, marginBottom: ".3rem" }}>Drop CLEAN_*.csv here</div>
+              <div style={{ fontSize: ".78rem", color: "var(--text-muted)" }}>
+                Output of pipeline.py — or click to browse
+              </div>
+              <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleFile} />
             </div>
           </>
         ) : (
           <div>
             <Alert type="info">
-              This will trigger a Selenium scrape on the server for year <strong>{config.year}</strong>, rounds <strong>{config.rounds}</strong>.
-              Ensure ChromeDriver is installed on the backend server.
+              Clicking below will run <code>cet_scraper.py</code> on the server and download PDFs for
+              year <strong>{config.year}</strong> rounds <strong>{config.rounds}</strong>.
+              After it completes, run <code>pipeline.py --skip-scrape</code> locally to get the clean CSV,
+              then come back and upload it.
             </Alert>
             <button className="btn btn-primary" onClick={handleScrape} disabled={loading}>
-              {loading ? "Scraping…" : "🤖 Start Selenium Scrape"}
+              {loading ? "Scraping…" : "🤖 Start Selenium Scrape on Server"}
             </button>
+            {scrapeFiles && scrapeFiles.length > 0 && (
+              <div className="card" style={{ marginTop: "1rem" }}>
+                <div className="card-header"><div className="card-title">✅ Downloaded PDFs</div></div>
+                <div className="tbl-wrap">
+                  <table className="tbl">
+                    <thead><tr><th>Filename</th><th>Round</th><th>Year</th></tr></thead>
+                    <tbody>
+                      {scrapeFiles.map((f, i) => (
+                        <tr key={i}>
+                          <td className="mono" style={{ fontSize: ".72rem" }}>{f.filename}</td>
+                          <td><Badge type="blue">Round {f.round}</Badge></td>
+                          <td className="mono">{f.year}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="card-body">
+                  <Alert type="warning">
+                    Now run locally: <code>python pipeline.py --year {config.year} --skip-scrape</code>
+                    <br />Then upload the <code>CLEAN_*.csv</code> from the <code>output/</code> folder above.
+                  </Alert>
+                </div>
+              </div>
+            )}
           </div>
         )}
-        {loading && <Spinner/>}
+
+        {loading && <Spinner />}
         {error && <Alert type="error">{error}</Alert>}
         {log.length > 0 && (
-          <div style={{marginTop:"1rem"}}>
-            {log.map((l,i) => (
+          <div style={{ marginTop: "1rem" }}>
+            {log.map((l, i) => (
               <div key={i} className="log-entry">
                 <div className="log-time">{l.ts}</div>
-                <div className="log-dot" style={{background: l.type==="error" ? "var(--red)" : l.type==="success" ? "var(--green)" : "var(--accent)"}}/>
+                <div className="log-dot" style={{ background: l.type === "error" ? "var(--red)" : l.type === "success" ? "var(--green)" : "var(--accent)" }} />
                 <div className="log-msg">{l.msg}</div>
               </div>
             ))}
@@ -1111,43 +1130,72 @@ def scrape_cap_cutoffs(year, rounds):
 
     const clean = async () => {
       setCleaning(true); setLog([]);
-      addLog("Starting data cleaning & normalisation…");
-      await new Promise(r => setTimeout(r, 600));
+      addLog("Cleaning & validating data…");
+      await new Promise(r => setTimeout(r, 400));
+
       const rows = rawData.rows || [];
       const issues = [];
+      let negativeFixed = 0;
+
       const out = rows.map((r, idx) => {
-        const cleaned = { ...r };
+        const row = { ...r };
         let status = "new";
 
-        // 1. Normalise college_code to 5-digit zero-padded
-        if (cleaned.college_code) {
-          const padded = String(cleaned.college_code).trim().padStart(5, "0");
-          if (padded !== cleaned.college_code) { issues.push(`Row ${idx+1}: Padded college_code ${cleaned.college_code} → ${padded}`); }
-          cleaned.college_code = padded;
+        // 1. Zero-pad college_code to 5 digits
+        if (row.college_code) {
+          const padded = String(row.college_code).trim().padStart(5, "0");
+          if (padded !== row.college_code) issues.push(`Row ${idx + 1}: padded college_code`);
+          row.college_code = padded;
         }
 
-        // 2. Trim all string fields
-        Object.keys(cleaned).forEach(k => { if (typeof cleaned[k] === "string") cleaned[k] = cleaned[k].trim(); });
+        // 2. Trim all strings
+        Object.keys(row).forEach(k => {
+          if (typeof row[k] === "string") row[k] = row[k].trim();
+        });
 
-        // 3. Normalise gender
-        const g = (cleaned.gender || "").toUpperCase();
-        cleaned.gender = g.includes("F") ? "Female" : g.includes("M") ? "Male" : "All";
+        // 3. Normalise cap_category (from extractor.py output or upload)
+        //    extractor.py uses "cap_category" after csv_cleaner.py rename
+        if (row.cap_category) {
+          row.cap_category = row.cap_category.toUpperCase().replace(/\s+/g, "");
+        } else if (row.category_reservation) {
+          row.cap_category = row.category_reservation.toUpperCase().replace(/\s+/g, "");
+        }
 
-        // 4. Parse numerics
-        cleaned.last_rank = parseInt(cleaned.last_rank) || null;
-        cleaned.cutoff_percentile = parseFloat(cleaned.cutoff_percentile) || null;
-        cleaned.round = parseInt(cleaned.round) || null;
+        // 4. Parse cutoff_percentile
+        // Extractor stores as (88.5013511) — parentheses = accounting notation, not negative
+        // Strip parens first, then parse
+        let rawPerc = String(row.cutoff_percentile || "").trim().replace(/[()]/g, "");
+        let perc = parseFloat(rawPerc);
+        if (!isNaN(perc)) {
+          if (perc < 0) { perc = Math.abs(perc); negativeFixed++; }
+          row.cutoff_percentile = perc;
+        } else {
+          row.cutoff_percentile = null;
+        }
 
-        // 5. Normalise cap_category code
-        if (cleaned.cap_category) cleaned.cap_category = cleaned.cap_category.toUpperCase().replace(/\s+/g,"");
+        // 5. Parse last_rank — also abs() for safety
+        const rank = parseInt(String(row.last_rank || "").replace(/,/g, ""));
+        row.last_rank = isNaN(rank) ? null : Math.abs(rank);
 
-        // 6. Flag obvious bad rows
-        if (!cleaned.cutoff_percentile || cleaned.cutoff_percentile > 100) status = "skip";
+        // 6. Parse last_cap_round
+        const capRound = parseInt(row.last_cap_round);
+        row.last_cap_round = isNaN(capRound) ? null : capRound;
 
-        return { ...cleaned, _status: status };
+        // 7. Flag bad rows
+        if (!row.cutoff_percentile || row.cutoff_percentile <= 0 || row.cutoff_percentile > 100)
+          status = "skip";
+        if (!row.last_rank || row.last_rank <= 0)
+          status = "skip";
+
+        // NOTE: gender column intentionally not present
+
+        return { ...row, _status: status };
       });
 
-      addLog(`Cleaned ${out.length} rows — ${out.filter(r=>r._status==="skip").length} flagged for skip`, "success");
+      if (negativeFixed > 0) {
+        addLog(`✓ Fixed ${negativeFixed} negative cutoff_percentile values`, "success");
+      }
+      addLog(`Cleaned ${out.length} rows — ${out.filter(r => r._status === "skip").length} flagged for skip`, "success");
       addLog(`${issues.length} normalisation fixes applied`);
       setCleanedRows(out);
       setCleaned(out);
@@ -1158,69 +1206,94 @@ def scrape_cap_cutoffs(year, rounds):
       <div>
         {!cleanedRows && (
           <>
-            <Alert type="info">Raw data loaded: <strong>{rawData?.rows?.length}</strong> rows from <strong>{rawData?.source}</strong>. Click Clean to normalise.</Alert>
-            <div style={{marginBottom:"1rem"}}>
-              <div className="card-title" style={{marginBottom:".5rem"}}>Cleaning Rules Applied:</div>
+            <Alert type="info">
+              Raw data loaded: <strong>{rawData?.rows?.length}</strong> rows from{" "}
+              <strong>{rawData?.source}</strong>. Click Clean to validate.
+            </Alert>
+            <div style={{ marginBottom: "1rem" }}>
+              <div className="card-title" style={{ marginBottom: ".5rem" }}>Cleaning Rules:</div>
               {[
                 "Zero-pad college_code to 5 digits",
                 "Trim all string whitespace",
-                "Normalise gender → Male / Female / All",
-                "Parse last_rank and cutoff_percentile to numbers",
                 "Uppercase & strip spaces from CAP category codes",
-                "Flag rows with missing/invalid cutoff_percentile as SKIP",
-              ].map(r => <div key={r} style={{fontSize:".78rem", color:"var(--text-muted)", padding:".2rem 0"}}>✓ {r}</div>)}
+                "Fix NEGATIVE cutoff_percentile → absolute value",
+                "Parse last_rank and last_cap_round to integers (abs)",
+                "Flag rows with missing/invalid percentile or rank as SKIP",
+                "Gender field removed (not used in schema)",
+              ].map(rule => (
+                <div key={rule} style={{ fontSize: ".78rem", color: "var(--text-muted)", padding: ".2rem 0" }}>✓ {rule}</div>
+              ))}
             </div>
             <button className="btn btn-primary" onClick={clean} disabled={cleaning}>
-              {cleaning ? "Cleaning…" : "🧹 Clean & Normalise Data"}
+              {cleaning ? "Cleaning…" : "🧹 Clean & Validate Data"}
             </button>
           </>
         )}
-
-        {cleaning && <Spinner/>}
-
+        {cleaning && <Spinner />}
         {log.length > 0 && (
-          <div style={{marginBottom:"1rem"}}>
-            {log.map((l,i) => (
+          <div style={{ marginBottom: "1rem" }}>
+            {log.map((l, i) => (
               <div key={i} className="log-entry">
                 <div className="log-time">{l.ts}</div>
-                <div className="log-dot" style={{background: l.type==="error" ? "var(--red)" : l.type==="success" ? "var(--green)" : "var(--accent)"}}/>
+                <div className="log-dot" style={{ background: l.type === "error" ? "var(--red)" : l.type === "success" ? "var(--green)" : "var(--accent)" }} />
                 <div className="log-msg">{l.msg}</div>
               </div>
             ))}
           </div>
         )}
-
         {cleanedRows && (
           <>
-            <div className="flex gap-2" style={{marginBottom:"1rem"}}>
-              <Badge type="green">{cleanedRows.filter(r=>r._status==="new").length} New</Badge>
-              <Badge type="amber">{cleanedRows.filter(r=>r._status==="update").length} Update</Badge>
-              <Badge type="red">{cleanedRows.filter(r=>r._status==="skip").length} Skip</Badge>
+            <div className="flex gap-2" style={{ marginBottom: "1rem" }}>
+              <Badge type="green">{cleanedRows.filter(r => r._status === "new").length} Valid</Badge>
+              <Badge type="red">{cleanedRows.filter(r => r._status === "skip").length} Skip</Badge>
             </div>
             <div className="tbl-wrap">
               <table className="tbl">
-                <thead><tr><th>#</th><th>College Code</th><th>Course</th><th>CAP Cat</th><th>Gender</th><th>Round</th><th>Cutoff %ile</th><th>Status</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>College Code</th>
+                    <th>Course</th>
+                    <th>CAP Category</th>
+                    <th>Regional Reservation</th>
+                    <th>Round</th>
+                    <th>Last Rank</th>
+                    <th>Cutoff %ile</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {cleanedRows.slice(0,50).map((r,i) => (
-                    <tr key={i} className={r._status==="skip" ? "diff-skip" : r._status==="new" ? "diff-new" : "diff-update"}>
-                      <td className="mono">{i+1}</td>
+                  {cleanedRows.slice(0, 50).map((r, i) => (
+                    <tr key={i} className={r._status === "skip" ? "diff-skip" : "diff-new"}>
+                      <td className="mono">{i + 1}</td>
                       <td className="mono text-accent">{r.college_code}</td>
-                      <td style={{maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.course_name || r.course_code}</td>
-                      <td><Badge type="blue">{r.cap_category}</Badge></td>
-                      <td>{r.gender}</td>
-                      <td className="mono">{r.round}</td>
+                      <td style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.course_name || r.course_code}
+                      </td>
+                      <td><Badge type="blue">{r.cap_category || r.category_reservation}</Badge></td>
+                      <td style={{ fontSize: ".68rem", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.regional_reservation || "—"}
+                      </td>
+                      <td className="mono">{r.last_cap_round ?? "—"}</td>
+                      <td className="mono">{r.last_rank ?? "—"}</td>
                       <td className="mono text-green">{r.cutoff_percentile}</td>
-                      <td><Badge type={r._status==="skip" ? "red" : r._status==="new" ? "green" : "amber"}>{r._status}</Badge></td>
+                      <td><Badge type={r._status === "skip" ? "red" : "green"}>{r._status}</Badge></td>
                     </tr>
                   ))}
                   {cleanedRows.length > 50 && (
-                    <tr><td colSpan={8} style={{textAlign:"center", color:"var(--text-muted)", fontFamily:"var(--mono)", fontSize:".72rem"}}>… {cleanedRows.length - 50} more rows</td></tr>
+                    <tr>
+                      <td colSpan={9} style={{ textAlign: "center", color: "var(--text-muted)", fontFamily: "var(--mono)", fontSize: ".72rem" }}>
+                        … {cleanedRows.length - 50} more rows
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
             </div>
-            <div style={{marginTop:"1rem"}}>
-              <button className="btn btn-primary" onClick={() => setStep(3)}>Push to Database →</button>
+            <div style={{ marginTop: "1rem" }}>
+              <button className="btn btn-primary" onClick={() => setStep(3)}>
+                Push to Database →
+              </button>
             </div>
           </>
         )}
@@ -1230,31 +1303,35 @@ def scrape_cap_cutoffs(year, rounds):
 
   // ── Step 3: Push to DB ──────────────────────────────────────────────────────
   const StepPush = () => {
-    const [pushing, setPushing] = useState(false);
+    const [pushing,  setPushing]  = useState(false);
     const [progress, setProgress] = useState(0);
 
     const push = async () => {
       setPushing(true); setError(""); setLog([]); setProgress(0);
-      const validRows = (cleaned||[]).filter(r => r._status !== "skip");
+      const validRows = (cleaned || []).filter(r => r._status !== "skip");
       addLog(`Pushing ${validRows.length} valid rows to backend…`);
+
       try {
-        // Batch into chunks of 100
         const BATCH = 100;
         let pushed = 0;
         for (let i = 0; i < validRows.length; i += BATCH) {
-          const batch = validRows.slice(i, i + BATCH);
-          await apiPost(`${API}/admin/import/push`, { year: config.year, rows: batch }, token);
+          const batch = validRows.slice(i, i + BATCH).map(r => {
+            // Strip the _status helper field before sending
+            const { _status, ...clean } = r;
+            return clean;
+          });
+          await apiPost(`${API}/admin/import/push`,
+            { year: config.year, rows: batch }, token);
           pushed += batch.length;
           setProgress(Math.round((pushed / validRows.length) * 100));
           addLog(`Pushed ${pushed}/${validRows.length} rows`);
         }
         addLog("All data pushed successfully!", "success");
         setPushResult({ success: true, count: validRows.length });
-      } catch(e) {
+      } catch (e) {
         setError(e.message);
         addLog("Push failed: " + e.message, "error");
-      }
-      finally { setPushing(false); }
+      } finally { setPushing(false); }
     };
 
     return (
@@ -1262,75 +1339,38 @@ def scrape_cap_cutoffs(year, rounds):
         {!pushResult && (
           <>
             <Alert type="warning">
-              You are about to write <strong>{(cleaned||[]).filter(r=>r._status!=="skip").length} cutoff records</strong> to the database for year <strong>{config.year}</strong>.
-              This action is reversible only via SQL.
+              Writing <strong>{(cleaned || []).filter(r => r._status !== "skip").length} cutoff records</strong>{" "}
+              to the database for year <strong>{config.year}</strong>.
             </Alert>
-
-            <div className="card" style={{marginBottom:"1rem"}}>
-              <div className="card-header"><div className="card-title">📌 Backend Endpoint Required</div></div>
-              <div className="code-block">{`// AdminImportController.java
-@PostMapping("/import/push")
-@Transactional
-public ResponseEntity<?> pushCutoffs(@RequestBody ImportPayload payload) {
-    int saved = 0;
-    for (CutoffRow row : payload.getRows()) {
-        College college = collegeRepo.findByCollegeCode(row.getCollegeCode())
-            .orElseGet(() -> {
-                College c = new College();
-                c.setCollegeCode(row.getCollegeCode());
-                c.setCollegeName(row.getCollegeName());
-                return collegeRepo.save(c);
-            });
-        Course course = courseRepo.findByCollegeAndCourseCode(college, row.getCourseCode())
-            .orElseGet(() -> {
-                Course c = new Course();
-                c.setCollege(college); c.setCourseCode(row.getCourseCode());
-                c.setCourseName(row.getCourseName());
-                return courseRepo.save(c);
-            });
-        Category cat = categoryRepo.findByName(row.getCapCategory())
-            .orElseGet(() -> { Category c = new Category(); c.setCategoryName(row.getCapCategory()); return categoryRepo.save(c); });
-        Cutoff cutoff = new Cutoff();
-        cutoff.setCourse(course); cutoff.setCategory(cat);
-        cutoff.setCapCategoryCode(row.getCapCategory());
-        cutoff.setGender(row.getGender()); cutoff.setRound(row.getRound());
-        cutoff.setLastRank(row.getLastRank()); cutoff.setCutoffPercentile(row.getCutoffPercentile());
-        cutoffRepo.save(cutoff);
-        saved++;
-    }
-    return ResponseEntity.ok(Map.of("saved", saved));
-}`}</div>
-            </div>
-
             <button className="btn btn-primary" onClick={push} disabled={pushing}>
               {pushing ? "Pushing…" : "⬆ Push to Database"}
             </button>
-
             {pushing && (
-              <div style={{marginTop:"1rem"}}>
-                <div className="progress-bar"><div className="progress-fill" style={{width:`${progress}%`}}/></div>
-                <div className="mono" style={{fontSize:".72rem", color:"var(--text-muted)"}}>{progress}% complete</div>
+              <div style={{ marginTop: "1rem" }}>
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="mono" style={{ fontSize: ".72rem", color: "var(--text-muted)" }}>
+                  {progress}% complete
+                </div>
               </div>
             )}
           </>
         )}
-
         {pushResult?.success && (
-          <Alert type="success">✅ Successfully pushed {pushResult.count} records to the database!</Alert>
+          <Alert type="success">✅ Pushed {pushResult.count} records to database!</Alert>
         )}
-
         {error && <Alert type="error">{error}</Alert>}
-
-        {log.map((l,i) => (
+        {log.map((l, i) => (
           <div key={i} className="log-entry">
             <div className="log-time">{l.ts}</div>
-            <div className="log-dot" style={{background: l.type==="error" ? "var(--red)" : l.type==="success" ? "var(--green)" : "var(--accent)"}}/>
+            <div className="log-dot" style={{ background: l.type === "error" ? "var(--red)" : l.type === "success" ? "var(--green)" : "var(--accent)" }} />
             <div className="log-msg">{l.msg}</div>
           </div>
         ))}
-
         {pushResult?.success && (
-          <button className="btn btn-outline" style={{marginTop:"1rem"}} onClick={() => { setStep(0); setRawData(null); setCleaned(null); setLog([]); setPushResult(null); }}>
+          <button className="btn btn-outline" style={{ marginTop: "1rem" }}
+            onClick={() => { setStep(0); setRawData(null); setCleaned(null); setLog([]); setPushResult(null); }}>
             ↩ Start New Import
           </button>
         )}
@@ -1338,34 +1378,32 @@ public ResponseEntity<?> pushCutoffs(@RequestBody ImportPayload payload) {
     );
   };
 
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="fade-in">
       <div className="page-header">
         <div className="page-title">CET Data Import</div>
         <div className="page-sub">Scrape, clean, and push MHT-CET cutoff history into the database</div>
       </div>
-
       <div className="steps">
         {IMPORT_STEPS.map((s, i) => (
           <div key={s} className={`step ${i < step ? "done" : i === step ? "active" : ""}`}>
-            <div className="step-num">{i < step ? "✓" : i+1}</div>
+            <div className="step-num">{i < step ? "✓" : i + 1}</div>
             {s}
           </div>
         ))}
       </div>
-
       <div className="card">
         <div className="card-body">
-          {step === 0 && <StepConfig/>}
-          {step === 1 && <StepScrape/>}
-          {step === 2 && rawData && <StepPreview/>}
-          {step === 3 && cleaned && <StepPush/>}
+          {step === 0 && <StepConfig />}
+          {step === 1 && <StepScrape />}
+          {step === 2 && rawData && <StepPreview />}
+          {step === 3 && cleaned && <StepPush />}
         </div>
       </div>
     </div>
   );
 }
-
 // ══════════════════════════════════════════════════════════════════════════════
 // ML MODEL PAGE
 // ══════════════════════════════════════════════════════════════════════════════

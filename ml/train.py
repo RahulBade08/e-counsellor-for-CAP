@@ -29,6 +29,8 @@ from sklearn.preprocessing import OrdinalEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error
 from xgboost import XGBRegressor
+from sklearn.metrics import mean_squared_error
+import numpy as np
 
 # ── Load dataset ──────────────────────────────────────────────────────────────
 df = pd.read_csv(
@@ -98,6 +100,9 @@ val_preds = model.predict(X_val)
 mae = mean_absolute_error(y_val, val_preds)
 print(f"\n✅ Validation MAE: {mae:.3f} percentile points")
 print("   (This means predictions are on average ±{:.1f} percentile points off)".format(mae))
+
+rmse = np.sqrt(mean_squared_error(y_val, val_preds))
+print(f"✅ RMSE: {rmse:.3f}")
 
 # A MAE < 3 is good for cutoff prediction; < 2 is excellent.
 # If MAE is high, consider adding more features like college_type, district, etc.
