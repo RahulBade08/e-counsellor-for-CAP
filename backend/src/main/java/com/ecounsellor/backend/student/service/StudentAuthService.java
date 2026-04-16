@@ -111,9 +111,17 @@ public class StudentAuthService {
     }
 
     // ── ADD SHORTLIST ─────────────────────────────────────────────────────────
-    // Writes to both:
+    // Writes to:
     //   1. students.shortlisted_colleges (JSON) — Android app persistent list
-    //   2. student_shortlists table           — college counselling dashboard
+    //   2. student_shortlists table            — college counselling dashboard
+    //
+    // FIX (Bug 3 — double insert): CollegeResultAdapter fires an anonymous
+    // POST /event/shortlist at the same time this method inserts into
+    // student_shortlists. The existsRecentDuplicate guard in
+    // StudentShortlistRepository (60-second window) prevents the anonymous
+    // event from creating a second row. However to be safe, this method
+    // also checks if a row with the same fingerprint exists in the last
+    // 30 seconds before inserting, so that the two paths don't race.
     public StudentProfile addShortlist(String phone, ShortlistItem item) {
         Student s = repo.findByPhone(phone)
             .orElseThrow(() -> new RuntimeException("Student not found"));
@@ -129,16 +137,29 @@ public class StudentAuthService {
             s.setShortlistedColleges(toJson(list));
             repo.save(s);
 
-            StudentShortlist sl = new StudentShortlist();
-            sl.setCollegeCode(item.collegeCode);
-            sl.setCourseCode(item.courseName != null ? item.courseName : "");
-            sl.setCourseName(item.courseName);
-            sl.setStudentPercentile(s.getCetPercentile());
-            sl.setCategory(s.getCategory());
-            sl.setGender(s.getGender());
-            sl.setAdmissionType(s.getAdmissionType());
-            sl.setCapCategoryCode(deriveCapCategoryCode(s.getCategory(), s.getAdmissionType(), s.getGender()));
-            shortlistRepo.save(sl);
+            // Guard: skip insert if the anonymous event already wrote this row
+            // within the last 30 seconds (tighter window than the 60s in recordShortlist)
+            boolean alreadyRecorded = shortlistRepo.existsRecentDuplicate(
+                item.collegeCode, item.courseName,
+                s.getCetPercentile(), s.getCategory(),
+                LocalDateTime.now().minusSeconds(30));
+
+            if (!alreadyRecorded) {
+                StudentShortlist sl = new StudentShortlist();
+                sl.setCollegeCode(item.collegeCode);
+                // FIX: always store human-readable name in courseCode column too,
+                // so both columns are consistent and grouping by courseName works
+                sl.setCourseCode(item.courseName != null ? item.courseName : "");
+                sl.setCourseName(item.courseName);
+                sl.setStudentPercentile(s.getCetPercentile());
+                sl.setCategory(s.getCategory());
+                sl.setGender(s.getGender());
+                sl.setAdmissionType(s.getAdmissionType());
+                // FIX (Bug 2a): use corrected deriveCapCategoryCode
+                sl.setCapCategoryCode(
+                    deriveCapCategoryCode(s.getCategory(), s.getAdmissionType(), s.getGender()));
+                shortlistRepo.save(sl);
+            }
         }
 
         return new StudentProfile(s);
@@ -147,11 +168,7 @@ public class StudentAuthService {
     // ── REMOVE SHORTLIST ──────────────────────────────────────────────────────
     // Removes from both:
     //   1. students.shortlisted_colleges (JSON) — Android app persistent list
-    //   2. student_shortlists table           — college counselling dashboard
-    //
-    // BUG FIX: previously only removed from the JSON column.
-    // The dashboard table was never updated, so shortlist counts could only
-    // go up — they never decreased even after student removed the college.
+    //   2. student_shortlists table            — college counselling dashboard
     public StudentProfile removeShortlist(String phone, RemoveShortlistRequest req) {
         Student s = repo.findByPhone(phone)
             .orElseThrow(() -> new RuntimeException("Student not found"));
@@ -164,7 +181,10 @@ public class StudentAuthService {
         s.setShortlistedColleges(toJson(list));
         repo.save(s);
 
-        // 2. Remove from dashboard table — this was the missing step
+        // 2. Remove from dashboard table
+        // FIX: pass courseName (human-readable name like "Civil Engineering")
+        // because that is what is stored in the courseName column and what
+        // deleteByCollegeAndCourseAndCategory now matches on.
         shortlistRepo.deleteByCollegeAndCourseAndCategory(
                 req.collegeCode,
                 req.courseName != null ? req.courseName : "",
@@ -200,25 +220,54 @@ public class StudentAuthService {
         return p;
     }
 
+    /**
+     * FIX (Bug 2a) — deriveCapCategoryCode: corrected suffix logic.
+     *
+     * Maharashtra CAP code format: [G|L] + CATEGORY + [S|H|O]
+     *   Prefix: G = General (State-level), L = Ladies OR Home-university quota
+     *   Suffix: S = State, H = Home University, O = Other State
+     *
+     * Previous bug for OPEN category:
+     *   Old code: prefix + "OPEN" + (isLadies ? "S" : "H")
+     *   This was backwards — for a general male STATE student it produced "GOPENH"
+     *   (Home University quota) instead of "GOPENS" (State quota).
+     *
+     * Correct logic:
+     *   Suffix depends on admissionType, NOT on gender.
+     *   S = STATE (most students), H = HOME university, O = OTHER state.
+     *   Ladies prefix (L) is independent and applies for LADIES gender.
+     *
+     * All categories use the same suffix derivation — OPEN had a special case
+     * that was simply wrong.
+     */
     private String deriveCapCategoryCode(String category, String admissionType, String gender) {
-        if (category == null) return "GOPENH";
+        if (category == null) return "GOPENS";
         if ("EWS".equals(category))  return "EWS";
         if ("TFWS".equals(category)) return "TFWS";
 
         boolean isLadies = "LADIES".equalsIgnoreCase(gender);
-        boolean isHome   = "HOME".equalsIgnoreCase(admissionType);
-        String prefix = (isLadies || isHome) ? "L" : "G";
+        String prefix = isLadies ? "L" : "G";
 
-        return switch (category.toUpperCase()) {
-            case "OPEN" -> prefix + "OPEN" + (isLadies ? "S" : "H");
-            case "OBC"  -> prefix + "OBC"  + "S";
-            case "SC"   -> prefix + "SC"   + "S";
-            case "ST"   -> prefix + "ST"   + "S";
-            case "NT1"  -> prefix + "NT1"  + "S";
-            case "NT2"  -> prefix + "NT2"  + "S";
-            case "NT3"  -> prefix + "NT3"  + "S";
-            case "VJ"   -> prefix + "VJ"   + "S";
-            default     -> "GOPENH";
+        // Suffix is determined solely by admission type
+        String suffix;
+        if ("HOME".equalsIgnoreCase(admissionType))        suffix = "H";
+        else if ("OTHER".equalsIgnoreCase(admissionType))  suffix = "O";
+        else                                                suffix = "S"; // STATE (default)
+
+        String normalizedCat = switch (category.toUpperCase()) {
+            case "OPEN"               -> "OPEN";
+            case "OBC"                -> "OBC";
+            case "SC"                 -> "SC";
+            case "ST"                 -> "ST";
+            case "NT1", "NT-1"        -> "NT1";
+            case "NT2", "NT-2"        -> "NT2";
+            case "NT3", "NT-3"        -> "NT3";
+            // VJ (Vimukta Jati) is its own category — not an alias for NT1
+            case "VJ"                 -> "VJ";
+            case "SBC"                -> "OBC";
+            default                   -> "OPEN";
         };
+
+        return prefix + normalizedCat + suffix;
     }
 }

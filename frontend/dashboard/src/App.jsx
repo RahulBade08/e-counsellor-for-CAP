@@ -54,7 +54,8 @@ async function apiPut(url, body, token) {
 }
 
 // ── useFetch hook ───────────────────────────────────────────────────────────────
-// refreshKey: increment to force a new fetch — used by Refresh button
+// FIX (Bug 3): When url changes (new query), data is immediately cleared so stale
+// results from the previous fetch are never shown alongside a spinner.
 function useFetch(url, token) {
   const [data,       setData]       = useState(null);
   const [loading,    setLoading]    = useState(false);
@@ -64,14 +65,22 @@ function useFetch(url, token) {
   const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
 
   useEffect(() => {
-    if (!url) return;
+    if (!url) {
+      // FIX: clear data when url is nulled out (e.g. user navigates away)
+      setData(null);
+      setError(null);
+      return;
+    }
     let cancelled = false;
-    setLoading(true); setError(null); setData(null);
+    // FIX (Bug 3): clear previous data immediately so UI shows a clean spinner
+    // instead of the old result while the new fetch is in flight
+    setData(null);
+    setError(null);
+    setLoading(true);
     (async () => {
       try {
         const headers = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
-        // cache: "no-store" ensures browser never serves a cached response
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) {
           const e = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -82,7 +91,6 @@ function useFetch(url, token) {
       finally     { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  // refreshKey in deps causes fresh fetch on every refresh() call
   }, [url, token, refreshKey]);
 
   return { data, loading, error, refresh };
@@ -441,14 +449,41 @@ function InterestedPage({ code, token }) {
   if (error)   return <><Alert type="error">{error}</Alert><div style={{marginTop:"1rem"}}><RefreshBtn onClick={refresh} loading={loading} /></div></>;
   if (!data)   return null;
 
-  const branches   = data.byBranch        || [];
+  // FIX (Bug 1): Deduplicate branches by courseName before rendering.
+  // The backend groups by courseName, but as an extra safety net in the frontend
+  // we also deduplicate here using a Map keyed on courseName. This ensures that
+  // even if stale DB rows with different courseCode values slipped through,
+  // the user will never see the same branch name twice in the pill tabs or table.
+  const rawBranches = data.byBranch || [];
+  const branchMap   = new Map();
+  for (const b of rawBranches) {
+    const key = (b.courseName || b.courseCode || "").trim();
+    if (!branchMap.has(key)) branchMap.set(key, b);
+    else {
+      // Merge: accumulate shortlists and views into the first entry
+      const existing = branchMap.get(key);
+      existing.shortlists     = (existing.shortlists || 0) + (b.shortlists || 0);
+      existing.views          = (existing.views || 0) + (b.views || 0);
+      existing.conversionRate = existing.views > 0
+        ? Math.round(existing.shortlists * 1000.0 / existing.views) / 10.0 : 0;
+      // Merge byCategory arrays
+      const catMerge = new Map((existing.byCategory || []).map(c => [c.category, { ...c }]));
+      for (const c of (b.byCategory || [])) {
+        if (catMerge.has(c.category)) catMerge.get(c.category).count += c.count;
+        else catMerge.set(c.category, { ...c });
+      }
+      existing.byCategory = [...catMerge.values()].sort((a, b) => b.count - a.count);
+    }
+  }
+  const branches = [...branchMap.values()];
+
   const bands      = data.percentileBands || [];
   const categories = data.byCategory      || [];
   const convRate   = data.totalViews > 0
     ? `${(data.totalShortlists / data.totalViews * 100).toFixed(1)}%` : "—";
 
   const filtered = activeBranch === "ALL"
-    ? branches : branches.filter(b => b.courseCode === activeBranch);
+    ? branches : branches.filter(b => (b.courseName || b.courseCode) === activeBranch);
 
   return (
     <>
@@ -513,13 +548,16 @@ function InterestedPage({ code, token }) {
             <div className="pill-tabs">
               <div className={`pill-tab ${activeBranch === "ALL" ? "active" : ""}`}
                    onClick={() => setActiveBranch("ALL")}>All</div>
-              {branches.map(b => (
-                <div key={b.courseCode}
-                     className={`pill-tab ${activeBranch === b.courseCode ? "active" : ""}`}
-                     onClick={() => setActiveBranch(b.courseCode)}>
-                  {(b.courseName || b.courseCode)?.split(" ").slice(0, 2).join(" ")}
-                </div>
-              ))}
+              {branches.map(b => {
+                const label = (b.courseName || b.courseCode || "");
+                return (
+                  <div key={label}
+                       className={`pill-tab ${activeBranch === label ? "active" : ""}`}
+                       onClick={() => setActiveBranch(label)}>
+                    {label.split(" ").slice(0, 2).join(" ")}
+                  </div>
+                );
+              })}
             </div>
             <div style={{ overflowX: "auto" }}>
               <table className="tbl">
@@ -535,10 +573,9 @@ function InterestedPage({ code, token }) {
                 </thead>
                 <tbody>
                   {filtered.map(b => (
-                    <tr key={b.courseCode}>
+                    <tr key={b.courseName || b.courseCode}>
                       <td>
-                        <div className="branch-name">{b.courseName}</div>
-                        <div className="branch-code">{b.courseCode}</div>
+                        <div className="branch-name">{b.courseName || b.courseCode}</div>
                       </td>
                       <td className="mono">{(b.shortlists || 0).toLocaleString()}</td>
                       <td className="mono">{(b.views || 0).toLocaleString()}</td>
@@ -575,18 +612,58 @@ function InterestedPage({ code, token }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // PAGE: TARGET POOL
 // ══════════════════════════════════════════════════════════════════════════════
-const CAP_CODES = ["GOPENH","GOBCS","GOSC","GOST","GONT1S","GONT2S","GONT3S","LOPEN","EWS","TFWS"];
+
+// FIX (Bug 2 — CAP codes): Replaced non-existent "LOPEN" with real Maharashtra
+// CAP codes. Full list based on DTE Maharashtra counselling documentation.
+// Format: [G|L] + CATEGORY + [S|H|O]
+// G = General / State-level quota, L = Ladies / Home-university quota
+// S = State, H = Home University, O = Other State
+const CAP_CODES = [
+  // General (State quota) — most common
+  { code: "GOPENS",  label: "GOPENS  — Open (General, State)"          },
+  { code: "GOPENH",  label: "GOPENH  — Open (General, Home Univ.)"    },
+  { code: "GOBCS",   label: "GOBCS   — OBC (General)"                 },
+  { code: "GOSC",    label: "GOSC    — SC (General)"                   },
+  { code: "GOST",    label: "GOST    — ST (General)"                   },
+  { code: "GONT1S",  label: "GONT1S  — NT1 (General)"                 },
+  { code: "GONT2S",  label: "GONT2S  — NT2 (General)"                 },
+  { code: "GONT3S",  label: "GONT3S  — NT3 (General)"                 },
+  { code: "GOVJS",   label: "GOVJS   — VJ/DT (General)"               },
+  // Ladies quota
+  { code: "LOPENS",  label: "LOPENS  — Open (Ladies, State)"           },
+  { code: "LOPENH",  label: "LOPENH  — Open (Ladies, Home Univ.)"     },
+  { code: "LOBCS",   label: "LOBCS   — OBC (Ladies)"                  },
+  { code: "LOSC",    label: "LOSC    — SC (Ladies)"                    },
+  { code: "LOST",    label: "LOST    — ST (Ladies)"                    },
+  { code: "LONT1S",  label: "LONT1S  — NT1 (Ladies)"                  },
+  { code: "LONT2S",  label: "LONT2S  — NT2 (Ladies)"                  },
+  { code: "LONT3S",  label: "LONT3S  — NT3 (Ladies)"                  },
+  { code: "LOVJS",   label: "LOVJS   — VJ/DT (Ladies)"                },
+  // Special
+  { code: "EWS",     label: "EWS     — Economically Weaker Section"   },
+  { code: "TFWS",    label: "TFWS    — Tuition Fee Waiver Scheme"      },
+];
 
 function TargetPoolPage({ code, token }) {
-  const [form, setForm] = useState({ courseCode: "", cap: "GOPENH", round: 4 });
+  const [form, setForm] = useState({ courseCode: "", cap: "GOPENS", round: 4 });
+  // FIX (Bug 3): keep a separate "submitted" state so we only set url after user clicks,
+  // and track the last submitted form so we can show it alongside results
   const [url,  setUrl]  = useState(null);
+  const [lastSubmitted, setLastSubmitted] = useState(null);
   const { data, loading, error, refresh } = useFetch(url, token);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const analyze = () => {
     if (!form.courseCode.trim()) return;
-    setUrl(`${API_BASE}/${code}/target-pool?courseCode=${form.courseCode.trim()}&capCategoryCode=${form.cap}&round=${form.round}`);
+    const newUrl = `${API_BASE}/${code}/target-pool?courseCode=${encodeURIComponent(form.courseCode.trim())}&capCategoryCode=${form.cap}&round=${form.round}`;
+    // FIX (Bug 3): if the url is the same as before (same params, user hit analyze twice),
+    // force a refresh instead of no-op so data always refreshes
+    if (newUrl === url) { refresh(); }
+    else                { setUrl(newUrl); }
+    setLastSubmitted({ ...form });
   };
+
+  const selectedCapLabel = CAP_CODES.find(c => c.code === form.cap)?.label || form.cap;
 
   return (
     <>
@@ -602,11 +679,19 @@ function TargetPoolPage({ code, token }) {
                      value={form.courseCode} onChange={e => set("courseCode", e.target.value)}
                      onKeyDown={e => e.key === "Enter" && analyze()} />
             </div>
-            <div className="filter-group">
-              <div className="filter-label">CAP Category</div>
-              <select className="form-select" style={{ width: 148 }}
+            <div className="filter-group" style={{ minWidth: 260 }}>
+              <div className="filter-label">
+                CAP Category
+                {/* FIX (Bug 2): tooltip explains the CAP code format */}
+                <span style={{ fontWeight:400, fontSize:".7rem", color:"var(--text-muted)", marginLeft:".4rem" }}>
+                  (MHT-CET quota code)
+                </span>
+              </div>
+              <select className="form-select" style={{ width: 260 }}
                       value={form.cap} onChange={e => set("cap", e.target.value)}>
-                {CAP_CODES.map(c => <option key={c} value={c}>{c}</option>)}
+                {CAP_CODES.map(c => (
+                  <option key={c.code} value={c.code}>{c.label}</option>
+                ))}
               </select>
             </div>
             <div className="filter-group">
@@ -618,8 +703,8 @@ function TargetPoolPage({ code, token }) {
             </div>
             <div className="filter-group">
               <div className="filter-label">&nbsp;</div>
-              <button className="btn btn-accent" onClick={analyze} disabled={!form.courseCode.trim()}>
-                Analyze Pool
+              <button className="btn btn-accent" onClick={analyze} disabled={!form.courseCode.trim() || loading}>
+                {loading ? "Analyzing…" : "Analyze Pool"}
               </button>
             </div>
             {data && (
@@ -632,10 +717,12 @@ function TargetPoolPage({ code, token }) {
         </div>
       </div>
 
+      {/* FIX (Bug 3): spinner shown below the form, not replacing it, so the
+          form stays visible while new results load */}
       {loading && <Spinner />}
       {error   && <Alert type="error">{error}</Alert>}
 
-      {data && (
+      {data && !loading && (
         <>
           <div className="target-banner">
             <div>
@@ -644,9 +731,12 @@ function TargetPoolPage({ code, token }) {
               <div className="target-note">{data.note}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div className="target-label">{data.capCategoryCode}</div>
+              {/* FIX (Bug 2): show the full CAP category label, not just raw code */}
+              <div className="target-label" style={{ fontSize:".72rem", maxWidth:200 }}>
+                {selectedCapLabel}
+              </div>
               <div className="mono" style={{ color: "#FFD54F", fontSize: "1rem", fontWeight: 700, marginTop: ".25rem" }}>
-                Round {form.round}
+                Round {lastSubmitted?.round || form.round}
               </div>
             </div>
           </div>
@@ -671,7 +761,7 @@ function TargetPoolPage({ code, token }) {
         </>
       )}
 
-      {!data && !loading && !error && (
+      {!url && !loading && !error && (
         <div className="empty-state">
           <div className="empty-state-icon">🔍</div>
           Enter a course code above and click Analyze Pool
@@ -695,6 +785,7 @@ function TargetRangesPage({ code, token }) {
   if (error)   return <><Alert type="error">{error}</Alert><div style={{marginTop:"1rem"}}><RefreshBtn onClick={refresh} loading={loading} /></div></>;
 
   const branches = data?.branches || [];
+  // FIX (Bug 2): filter categories — also show category label alongside CAP code
   const cats     = ["ALL", ...new Set(branches.map(b => b.category).filter(Boolean))];
   const filtered = filter === "ALL" ? branches : branches.filter(b => b.category === filter);
 
@@ -752,7 +843,7 @@ function TargetRangesPage({ code, token }) {
             <thead>
               <tr>
                 <th>Branch</th>
-                <th>Category</th>
+                <th>CAP Category</th>
                 <th>Intake</th>
                 <th>Last Cutoff</th>
                 <th>Predicted</th>
@@ -776,8 +867,11 @@ function TargetRangesPage({ code, token }) {
                       <div className="branch-code">{b.courseCode}</div>
                     </td>
                     <td>
-                      <Badge type="primary">{b.category}</Badge>
-                      <div className="text-muted mt-1" style={{ fontSize: ".7rem" }}>{b.gender}</div>
+                      {/* FIX (Bug 2): show both the CAP code and the human category */}
+                      <Badge type="primary">{b.capCategoryCode}</Badge>
+                      <div className="text-muted mt-1" style={{ fontSize: ".7rem" }}>
+                        {b.category}{b.gender ? ` · ${b.gender}` : ""}
+                      </div>
                     </td>
                     <td className="mono">{b.intake}</td>
                     <td className="mono text-muted">{b.lastRoundCutoff?.toFixed(2) || "—"}</td>

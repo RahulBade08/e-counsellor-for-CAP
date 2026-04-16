@@ -1,5 +1,6 @@
 package com.ecounsellor.backend.admin.controller;
 
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,32 @@ public class AdminCollegeController {
     @GetMapping("/test")
     public String test() {
         return "Admin College Management is working!";
+    }
+
+    // ─── FIX: Added missing GET /all endpoint ───────────────────────────────
+    // Frontend CollegesPage calls GET /api/admin/college/all
+    // This was missing — the service had getAll() but no controller exposed it.
+    @GetMapping("/all")
+    public ResponseEntity<?> getAll() {
+        try {
+            List<CollegeDTO> colleges = service.getAll();
+            return ResponseEntity.ok(colleges);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // 🔹 GET SINGLE COLLEGE
+    @GetMapping("/{id}")
+    public ResponseEntity<?> getById(@PathVariable Long id) {
+        try {
+            CollegeDTO college = service.getById(id);
+            return ResponseEntity.ok(college);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", e.getMessage()));
+        }
     }
 
     // 🔹 CREATE COLLEGE

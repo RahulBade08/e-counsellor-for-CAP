@@ -61,6 +61,16 @@ public class AdminImportController {
     }
 
     // ── POST /api/admin/import/scrape ─────────────────────────────────────────
+    //
+    // FIX: The old response returned {rows, headers, source, year} which the
+    // frontend ignored (it expected {files: [{filename, round, year}]}).
+    //
+    // New response includes BOTH:
+    //   - files: [{filename, round, year}]  — shown in the "Downloaded PDFs" table
+    //   - rows/headers/source/year          — used to populate rawData → step 2
+    //
+    // The frontend's handleScrape now sets rawData from the response and
+    // advances to step 2 automatically when rows are present.
     @PostMapping("/scrape")
     public ResponseEntity<?> scrape(
             @RequestBody Map<String, String> body,
@@ -74,15 +84,14 @@ public class AdminImportController {
 
         try {
             // ── Resolve absolute paths ────────────────────────────────────────
-            String absDir    = Paths.get(pipelineDir).toAbsolutePath().normalize().toString();
-            String outputDir = Paths.get(absDir, "output").toString();
+            String absDir         = Paths.get(pipelineDir).toAbsolutePath().normalize().toString();
+            String outputDir      = Paths.get(absDir, "output").toString();
             String pipelineScript = Paths.get(absDir, "pipeline.py").toString();
 
-            logLines.add("[pipeline] Dir: " + absDir);
+            logLines.add("[pipeline] Dir: "    + absDir);
             logLines.add("[pipeline] Python: " + pythonExe);
             logLines.add("[pipeline] Script: " + pipelineScript);
 
-            // Verify files exist before running
             if (!new File(pipelineScript).exists()) {
                 return ResponseEntity.status(500).body(Map.of(
                     "error", "pipeline.py not found at: " + pipelineScript,
@@ -90,25 +99,21 @@ public class AdminImportController {
                 ));
             }
 
-            // ── Run pipeline.py ───────────────────────────────────────────────
             logLines.add("[pipeline] Starting: year=" + year + " rounds=" + rounds);
 
             ProcessBuilder pb = new ProcessBuilder(
-                pythonExe,
-                pipelineScript,
+                pythonExe, pipelineScript,
                 "--year",   year,
                 "--rounds", rounds
             );
             pb.directory(new File(absDir));
-            pb.redirectErrorStream(true);  // merge stderr+stdout
+            pb.redirectErrorStream(true);
 
             Process process = pb.start();
 
-            // Read ALL output
             StringBuilder fullOutput = new StringBuilder();
             try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(),
-                                          StandardCharsets.UTF_8))) {
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     fullOutput.append(line).append("\n");
@@ -119,21 +124,37 @@ public class AdminImportController {
             int exitCode = process.waitFor();
             logLines.add("[pipeline] Exit code: " + exitCode);
 
-            // ── Find CLEAN_*.csv files ────────────────────────────────────────
+            // ── Scan output dir for CLEAN_*.csv and PDF files ─────────────────
+            List<Map<String, String>> fileEntries = new ArrayList<>();   // for frontend "files" table
             List<Path> cleanCsvs = new ArrayList<>();
             Path outPath = Paths.get(outputDir);
 
             if (!Files.exists(outPath)) {
                 logLines.add("[pipeline] output dir does not exist: " + outputDir);
             } else {
-                // List all files in output dir for debugging
                 logLines.add("[pipeline] Files in output dir:");
                 try (var stream = Files.list(outPath)) {
                     stream.sorted().forEach(p -> {
-                        logLines.add("  " + p.getFileName().toString());
-                        if (p.getFileName().toString().startsWith("CLEAN_")
-                                && p.getFileName().toString().endsWith(".csv")) {
+                        String fname = p.getFileName().toString();
+                        logLines.add("  " + fname);
+
+                        // Collect CLEAN CSVs for data parsing
+                        if (fname.startsWith("CLEAN_") && fname.endsWith(".csv")) {
                             cleanCsvs.add(p);
+                        }
+
+                        // ── Build file entry for frontend "Downloaded PDFs" table
+                        // Filenames from cet_scraper.py follow pattern:
+                        //   MeritList_<year>_Round<N>.pdf  OR  CLEAN_<year>_Round<N>.csv
+                        // Extract round number from filename.
+                        if (fname.endsWith(".pdf") || fname.endsWith(".csv")) {
+                            Map<String, String> entry = new LinkedHashMap<>();
+                            entry.put("filename", fname);
+                            entry.put("year", year);
+                            // Parse round from filename e.g. "Round1", "round_1", "_R1_"
+                            String roundNum = extractRound(fname);
+                            entry.put("round", roundNum);
+                            fileEntries.add(entry);
                         }
                     });
                 }
@@ -142,15 +163,16 @@ public class AdminImportController {
             if (cleanCsvs.isEmpty()) {
                 logService.warn(actor, "Pipeline ran but no CLEAN_*.csv found");
                 return ResponseEntity.status(500).body(Map.of(
-                    "error",      "Pipeline completed but no CLEAN_*.csv was produced.",
+                    "error",       "Pipeline completed but no CLEAN_*.csv was produced.",
                     "pipelineLog", fullOutput.toString(),
-                    "log",        logLines
+                    "files",       fileEntries,
+                    "log",         logLines
                 ));
             }
 
             logLines.add("[pipeline] Found " + cleanCsvs.size() + " CLEAN CSV(s)");
 
-            // ── Parse CSV rows ────────────────────────────────────────────────
+            // ── Parse CSV rows (robust quoted-field parser) ───────────────────
             List<Map<String, String>> allRows = new ArrayList<>();
             List<String> headers = new ArrayList<>();
 
@@ -160,23 +182,18 @@ public class AdminImportController {
                 if (lines.isEmpty()) continue;
 
                 if (headers.isEmpty()) {
-                    // Parse header — strip BOM and quotes
-                    String headerLine = lines.get(0)
-                        .replace("\uFEFF", "")
-                        .replace("\"", "");
-                    headers = Arrays.asList(headerLine.split(",", -1));
+                    String headerLine = lines.get(0).replace("\uFEFF", "");
+                    headers = parseCsvLine(headerLine);
                 }
 
                 for (int i = 1; i < lines.size(); i++) {
                     String line = lines.get(i).trim();
                     if (line.isEmpty()) continue;
 
-                    // Handle quoted CSV values
-                    String[] vals = line.replace("\"", "").split(",", -1);
+                    List<String> vals = parseCsvLine(line);
                     Map<String, String> row = new LinkedHashMap<>();
                     for (int j = 0; j < headers.size(); j++) {
-                        row.put(headers.get(j).trim(),
-                                j < vals.length ? vals[j].trim() : "");
+                        row.put(headers.get(j).trim(), j < vals.size() ? vals.get(j).trim() : "");
                     }
                     allRows.add(row);
                 }
@@ -186,8 +203,12 @@ public class AdminImportController {
             logService.success(actor,
                 "Pipeline complete: year=" + year + " rows=" + allRows.size());
 
+            // ── Build response that satisfies BOTH frontend requirements ──────
+            // 1. files[]          → "Downloaded PDFs" table in Scrape step
+            // 2. rows/headers     → rawData to advance to Preview step
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("status",  "ok");
+            response.put("files",   fileEntries);   // ← FIX: was missing before
             response.put("rows",    allRows);
             response.put("headers", headers);
             response.put("source",  "scrape");
@@ -205,6 +226,52 @@ public class AdminImportController {
                 "log",   logLines
             ));
         }
+    }
+
+    /**
+     * Robust CSV line parser that correctly handles quoted fields containing commas.
+     * e.g.  `"College of Engg, Pune",06002,OPEN`  →  ["College of Engg, Pune", "06002", "OPEN"]
+     */
+    private List<String> parseCsvLine(String line) {
+        List<String> fields = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                // Handle escaped double-quotes ("")
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    current.append('"');
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (c == ',' && !inQuotes) {
+                fields.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        fields.add(current.toString());
+        return fields;
+    }
+
+    /**
+     * Extracts round number from a filename.
+     * Handles patterns: Round1, round_1, _R1_, R01, round-2, etc.
+     * Returns "?" if not found.
+     */
+    private String extractRound(String filename) {
+        // Try patterns: Round1, Round_1, Round-1, R1 (case-insensitive)
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("(?i)[Rr]ound[_\\-]?(\\d+)|[_\\-]R(\\d+)[_\\-.]")
+            .matcher(filename);
+        if (m.find()) {
+            return m.group(1) != null ? m.group(1) : m.group(2);
+        }
+        return "?";
     }
 
     // ── POST /api/admin/import/retrain ────────────────────────────────────────

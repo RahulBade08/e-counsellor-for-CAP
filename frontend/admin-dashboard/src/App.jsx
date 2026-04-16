@@ -1006,6 +1006,29 @@ function DataImportPage({ token }) {
   const StepScrape = () => {
     const [scrapeFiles, setScrapeFiles] = useState(null);
 
+    // ── FIX: Robust CSV parser that handles quoted fields containing commas ──
+    // The old split(",") broke on values like "College of Engg, Pune"
+    const parseCsvLine = (line) => {
+      const fields = [];
+      let current = "";
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (c === '"') {
+          // Handle escaped double-quote ("")
+          if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+          else { inQuotes = !inQuotes; }
+        } else if (c === ',' && !inQuotes) {
+          fields.push(current.trim());
+          current = "";
+        } else {
+          current += c;
+        }
+      }
+      fields.push(current.trim());
+      return fields;
+    };
+
     const handleFile = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -1013,12 +1036,16 @@ function DataImportPage({ token }) {
       addLog(`Reading file: ${file.name}`);
       try {
         const text = await file.text();
-        const lines = text.trim().split("\n");
-        const headers = lines[0].split(",").map(h => h.trim().replace(/"/g, ""));
-        const rows = lines.slice(1).map(line => {
-          const vals = line.split(",").map(v => v.trim().replace(/"/g, ""));
-          return Object.fromEntries(headers.map((h, i) => [h, vals[i] ?? ""]));
-        }).filter(r => Object.values(r).some(v => v.trim() !== ""));
+        // Strip BOM if present
+        const clean = text.replace(/^\uFEFF/, "");
+        const lines = clean.trim().split(/\r?\n/);
+        const headers = parseCsvLine(lines[0]);
+        const rows = lines.slice(1)
+          .map(line => {
+            const vals = parseCsvLine(line);
+            return Object.fromEntries(headers.map((h, i) => [h, vals[i] ?? ""]));
+          })
+          .filter(r => Object.values(r).some(v => String(v).trim() !== ""));
         addLog(`Parsed ${rows.length} rows, ${headers.length} columns`, "success");
         addLog(`Columns: ${headers.join(", ")}`);
         setRawData({ rows, headers, source: "upload", year: config.year });
@@ -1035,11 +1062,32 @@ function DataImportPage({ token }) {
       try {
         const data = await apiPost(`${API}/admin/import/scrape`,
           { year: config.year, rounds: config.rounds }, token);
+
+        // ── FIX: backend now returns both `files` (for display) and
+        // `rows` (parsed CSV data). When rows are present, advance to
+        // Preview step automatically so the pipeline is end-to-end.
         const files = data.files || [];
         setScrapeFiles(files);
-        addLog(`Scrape complete. ${files.length} PDF(s) downloaded on server.`, "success");
-        (data.log || []).forEach(l => addLog(l.replace("[scraper] ", "")));
+
+        const rowCount = (data.rows || []).length;
+        addLog(`Scrape complete. ${files.length} file(s) found on server.`, "success");
+        if (rowCount > 0) {
+          addLog(`Pipeline produced ${rowCount} rows — advancing to Preview…`, "success");
+        }
+        (data.log || []).forEach(l => addLog(l.replace("[scraper] ", "").replace("[pipeline] ", "")));
         (data.errors || []).forEach(e => addLog(e, "error"));
+
+        // If pipeline already produced rows, populate rawData and go to step 2
+        if (data.rows && data.rows.length > 0) {
+          setRawData({
+            rows:    data.rows,
+            headers: data.headers || [],
+            source:  "scrape",
+            year:    data.year || config.year,
+          });
+          // Small delay so user sees the success log before transition
+          setTimeout(() => setStep(2), 1200);
+        }
       } catch (e) {
         setError(e.message);
         addLog("Scrape failed: " + e.message, "error");
@@ -1080,7 +1128,7 @@ function DataImportPage({ token }) {
             </button>
             {scrapeFiles && scrapeFiles.length > 0 && (
               <div className="card" style={{ marginTop: "1rem" }}>
-                <div className="card-header"><div className="card-title">✅ Downloaded PDFs</div></div>
+                <div className="card-header"><div className="card-title">✅ Files on Server</div></div>
                 <div className="tbl-wrap">
                   <table className="tbl">
                     <thead><tr><th>Filename</th><th>Round</th><th>Year</th></tr></thead>
@@ -1088,7 +1136,7 @@ function DataImportPage({ token }) {
                       {scrapeFiles.map((f, i) => (
                         <tr key={i}>
                           <td className="mono" style={{ fontSize: ".72rem" }}>{f.filename}</td>
-                          <td><Badge type="blue">Round {f.round}</Badge></td>
+                          <td><Badge type="blue">Round {f.round !== "?" ? f.round : "—"}</Badge></td>
                           <td className="mono">{f.year}</td>
                         </tr>
                       ))}
@@ -1096,10 +1144,20 @@ function DataImportPage({ token }) {
                   </table>
                 </div>
                 <div className="card-body">
-                  <Alert type="warning">
-                    Now run locally: <code>python pipeline.py --year {config.year} --skip-scrape</code>
-                    <br />Then upload the <code>CLEAN_*.csv</code> from the <code>output/</code> folder above.
-                  </Alert>
+                  {/* If the pipeline already returned rows, the page auto-advances.
+                      If not (PDFs only, needs local pipeline run), show manual steps. */}
+                  {!rawData ? (
+                    <Alert type="warning">
+                      PDFs downloaded. Now run locally:{" "}
+                      <code>python pipeline.py --year {config.year} --skip-scrape</code>
+                      <br />Then upload the <code>CLEAN_*.csv</code> from the <code>output/</code> folder,
+                      or switch to Upload mode above.
+                    </Alert>
+                  ) : (
+                    <Alert type="success">
+                      ✅ Pipeline produced data rows — proceeding to Preview automatically…
+                    </Alert>
+                  )}
                 </div>
               </div>
             )}
