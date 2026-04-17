@@ -390,17 +390,22 @@ function RegisterPage({ onLogin, onGoLogin }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // TOPBAR + SIDEBAR
 // ══════════════════════════════════════════════════════════════════════════════
-function Topbar({ profile, onNav, onLogout }) {
+function Topbar({ profile, onNav, onLogout, sidebarOpen, onToggleSidebar }) {
   return (
     <header className="topbar">
-      <div className="topbar-logo">
-        <div className="topbar-logo-icon">🎓</div>
-        <div className="topbar-brand-name">E-<span>Counsellor</span></div>
-      </div>
-      <div className="topbar-sep" />
-      <div className="topbar-college">
-        <div className="topbar-college-name">{profile?.collegeName || "College Portal"}</div>
-        <div className="topbar-college-code">{profile?.collegeCode}</div>
+      <div className="topbar-left">
+        <button className="sidebar-toggle" onClick={onToggleSidebar} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+          {sidebarOpen ? "☰" : "☰"}
+        </button>
+        <div className="topbar-logo">
+          <div className="topbar-logo-icon">🎓</div>
+          <div className="topbar-brand-name">E-<span>Counsellor</span></div>
+        </div>
+        <div className="topbar-sep" />
+        <div className="topbar-college">
+          <div className="topbar-college-name">{profile?.collegeName || "College Portal"}</div>
+          <div className="topbar-college-code">{profile?.collegeCode}</div>
+        </div>
       </div>
       <div className="topbar-right">
         <span className="topbar-pill">{profile?.collegeCode}</span>
@@ -422,16 +427,16 @@ const NAV = [
   { id: "profile",        icon: "🏫", label: "College Profile" },
 ];
 
-function Sidebar({ active, onNav }) {
+function Sidebar({ active, onNav, isOpen }) {
   return (
-    <nav className="sidebar">
+    <nav className={`sidebar ${isOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
       <div className="sidebar-section">Dashboard</div>
       {NAV.map(n => (
         <div key={n.id}
              className={`nav-item ${active === n.id ? "active" : ""}`}
              onClick={() => onNav(n.id)}>
           <span className="nav-icon">{n.icon}</span>
-          {n.label}
+          <span className="nav-label">{n.label}</span>
         </div>
       ))}
     </nav>
@@ -1201,6 +1206,22 @@ export default function App() {
   const { token, profile, saveSession, logout, updateProfile } = useAuth();
   const [page,     setPage]     = useState("interested");
   const [authView, setAuthView] = useState("login");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Set initial sidebar state based on screen size
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setSidebarOpen(false);
+      } else {
+        setSidebarOpen(true);
+      }
+    };
+
+    handleResize(); // Set initial state
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   if (!token || !profile) {
     return authView === "register"
@@ -1213,9 +1234,10 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Topbar profile={profile} onNav={setPage} onLogout={logout} />
+      <Topbar profile={profile} onNav={setPage} onLogout={logout} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
       <div className="body-layout">
-        <Sidebar active={page} onNav={setPage} />
+        <Sidebar active={page} onNav={setPage} isOpen={sidebarOpen} />
+        {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
         <main className="main">
           {page !== "profile" && (
             <div className="page-header">

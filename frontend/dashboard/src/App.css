@@ -34,6 +34,8 @@
 }
 
 /* ── COMMON ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { overflow-x: hidden; }
 body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(--bg); color: var(--text-body); }
 
 /* ── AUTH LAYOUT ────────────────────────────────────────────────────────────── */
@@ -317,6 +319,7 @@ body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(
 /* ── TOPBAR ─────────────────────────────────────────────────────────────────── */
 .topbar {
   height: 56px;
+  width: 100vw;
   background: var(--primary-dark);
   display: flex;
   align-items: center;
@@ -324,9 +327,39 @@ body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(
   gap: .875rem;
   position: sticky;
   top: 0;
+  left: 0;
   z-index: 200;
   box-shadow: 0 2px 16px rgba(13,71,161,.35);
   flex-shrink: 0;
+  box-sizing: border-box;
+  justify-content: space-between;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: .875rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-toggle {
+  width: 32px;
+  height: 32px;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 6px;
+  color: white;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.sidebar-toggle:hover {
+  background: rgba(255,255,255,.2);
 }
 
 .topbar-logo {
@@ -364,7 +397,8 @@ body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(
   display: flex;
   flex-direction: column;
   min-width: 0;
-  flex: 1;
+  width: 250px;
+  flex-shrink: 0;
 }
 
 .topbar-college-name {
@@ -450,6 +484,22 @@ body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(
   padding: 1.25rem 0 2rem;
   display: flex;
   flex-direction: column;
+  transition: transform 0.3s ease, width 0.3s ease;
+}
+
+.sidebar-closed {
+  width: 0;
+  transform: translateX(-100%);
+  overflow: hidden;
+}
+
+.sidebar-open {
+  width: 220px;
+  transform: translateX(0);
+}
+
+.sidebar-overlay {
+  display: none;
 }
 
 .sidebar-section {
@@ -488,6 +538,7 @@ body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(
 }
 
 .nav-icon { font-size: .95rem; width: 1.1rem; text-align: center; flex-shrink: 0; }
+.nav-label { flex: 1; }
 
 /* ── MAIN ────────────────────────────────────────────────────────────────────── */
 .main { flex: 1; padding: 2rem 2.25rem; min-width: 0; overflow-x: hidden; }
@@ -902,3 +953,177 @@ body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(
 .ml-auto { margin-left: auto; }
 .text-right { text-align: right; }
 .text-center { text-align: center; }
+
+/* ── RESPONSIVE ──────────────────────────────────────────────────────────────── */
+
+/* ── Tablet: 768px–1023px ─────────────────────────────────────────────────── */
+@media (max-width: 1023px) {
+  /* Auth layout stacks vertically */
+  .auth-page {
+    grid-template-columns: 1fr;
+  }
+  .auth-left {
+    padding: 2.5rem 2rem;
+    min-height: 260px;
+  }
+  .auth-hero-title { font-size: 1.9rem; }
+  .auth-features { display: none; }
+
+  /* Sidebar becomes overlay that can be toggled */
+  .sidebar {
+    position: fixed;
+    top: 56px;
+    left: 0;
+    height: calc(100vh - 56px);
+    z-index: 150;
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-100%);
+  }
+  .sidebar-open {
+    transform: translateX(0);
+  }
+  .sidebar-closed {
+    transform: translateX(-100%);
+  }
+
+  /* Overlay backdrop when sidebar is open on tablet */
+  .sidebar-open::before {
+    content: '';
+    position: fixed;
+    top: 56px;
+    left: 220px;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: -1;
+    cursor: pointer;
+  }
+
+  .sidebar-overlay {
+    position: fixed;
+    top: 56px;
+    left: 220px;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 140;
+    cursor: pointer;
+  }
+
+  /* Main content gets full width when sidebar is closed */
+  .main { padding: 1.5rem 1.25rem; }
+
+  /* Two-col grids become single col */
+  .two-col { grid-template-columns: 1fr; }
+  .info-grid { grid-template-columns: 1fr; }
+  .pool-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── Mobile: ≤767px ───────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Auth */
+  .auth-page { grid-template-columns: 1fr; }
+  .auth-left { display: none; }
+  .auth-right { padding: 2rem 1.25rem; min-height: 100vh; }
+  .auth-form-wrap { max-width: 100%; }
+
+  /* Topbar — hide college code pill, shrink text */
+  .topbar { padding: 0 1rem; gap: .5rem; }
+  .topbar-pill { display: none; }
+  .topbar-sep  { display: none; }
+  .topbar-college { width: 180px; }
+  .topbar-college-name { font-size: .78rem; }
+  .topbar-brand-name   { font-size: .88rem; }
+  .topbar-logout-btn   { padding: 4px 10px; font-size: .7rem; }
+
+  /* Sidebar becomes overlay that can be toggled */
+  .body-layout { flex-direction: row; }
+  .sidebar {
+    position: fixed;
+    top: 56px;
+    left: 0;
+    height: calc(100vh - 56px);
+    z-index: 150;
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-100%);
+  }
+  .sidebar-open {
+    transform: translateX(0);
+  }
+  .sidebar-closed {
+    transform: translateX(-100%);
+  }
+
+  /* Overlay backdrop when sidebar is open on mobile/tablet */
+  .sidebar-open::before {
+    content: '';
+    position: fixed;
+    top: 56px;
+    left: 220px;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: -1;
+    cursor: pointer;
+  }
+
+  .sidebar-overlay {
+    position: fixed;
+    top: 56px;
+    left: 220px;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 140;
+    cursor: pointer;
+  }
+
+  /* Main — full width */
+  .main {
+    padding: 1.25rem 1rem;
+  }
+
+  /* Grids */
+  .two-col  { grid-template-columns: 1fr; }
+  .info-grid { grid-template-columns: 1fr; }
+  .pool-grid { grid-template-columns: 1fr; }
+  .kpi-grid { grid-template-columns: 1fr 1fr; }
+  .form-row { grid-template-columns: 1fr; }
+
+  /* Cards */
+  .card-body { padding: 1rem; }
+  .card-header { padding: .75rem 1rem; flex-wrap: wrap; gap: .5rem; }
+
+  /* Page header */
+  .page-title { font-size: 1.2rem; }
+  .page-header { margin-bottom: 1.25rem; }
+
+  /* Tables — make them horizontally scrollable */
+  .card { overflow-x: auto; }
+  .tbl { min-width: 520px; }
+
+  /* Target banner */
+  .target-banner { flex-direction: column; align-items: flex-start; }
+
+  /* Profile hero */
+  .profile-hero { flex-direction: column; gap: 1rem; }
+  .profile-actions { margin-left: 0; width: 100%; }
+  .profile-actions .btn { flex: 1; }
+
+  /* Filter row */
+  .filter-row { flex-direction: column; align-items: stretch; }
+  .filter-group { width: 100%; }
+  .filter-group .form-input,
+  .filter-group .form-select { width: 100%; }
+
+  /* KPI value sizing */
+  .kpi-value { font-size: 1.6rem; }
+  .pool-num  { font-size: 2rem; }
+}
+
+/* ── Very small phones: ≤374px ────────────────────────────────────────────── */
+@media (max-width: 374px) {
+  .kpi-grid { grid-template-columns: 1fr; }
+  .nav-label { display: none; }
+  .topbar-avatar-btn { display: none; }
+}
